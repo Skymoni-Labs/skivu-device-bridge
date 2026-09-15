@@ -1,0 +1,82 @@
+package ai.nidhoggfgg.phoneuse.core
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+object ToolCatalog {
+    fun validate(name: String, args: JSONObject) {
+        val tools = all()
+        val tool = (0 until tools.length()).map { tools.getJSONObject(it) }.find { it.getString("name") == name }
+            ?: fail("UNKNOWN_TOOL", "Unknown tool: $name")
+        validateObject(args, tool.getJSONObject("inputSchema"), "arguments")
+        if (name in setOf("tap", "long_press")) {
+            val node = args.has("element_id")
+            if (node && (args.has("x") || args.has("y"))) fail("INVALID_ARGUMENT", "Choose element_id OR coordinates")
+            if (!node && (!args.has("x") || !args.has("y"))) fail("INVALID_ARGUMENT", "Supply element_id OR x and y")
+        }
+        if (name == "scroll" && args.has("element_id") == args.has("region")) fail("INVALID_ARGUMENT", "Choose element_id OR region")
+        if (args.has("element_id") && !args.has("observation_id")) fail("INVALID_ARGUMENT", "element_id requires observation_id")
+    }
+    private fun validateObject(value: JSONObject, schema: JSONObject, path: String) {
+        val required = schema.optJSONArray("required") ?: JSONArray()
+        for (i in 0 until required.length()) if (!value.has(required.getString(i))) fail("INVALID_ARGUMENT", "$path.${required.getString(i)} is required")
+        val properties = schema.getJSONObject("properties")
+        value.keys().forEach { key ->
+            val field = properties.optJSONObject(key) ?: fail("INVALID_ARGUMENT", "Unknown field $path.$key")
+            val item = value.get(key)
+            val valid = when (field.getString("type")) {
+                "string" -> item is String
+                "boolean" -> item is Boolean
+                "number" -> item is Number && item.toDouble().isFinite()
+                "integer" -> item is Number && item.toDouble().isFinite() && item.toDouble() % 1.0 == 0.0
+                "object" -> item is JSONObject
+                "array" -> item is JSONArray
+                else -> false
+            }
+            if (!valid) fail("INVALID_ARGUMENT", "Invalid type for $path.$key")
+            if (item is JSONObject) validateObject(item, field, "$path.$key")
+            if (item is JSONArray) {
+                if (item.length() < field.optInt("minItems", 0) || item.length() > field.optInt("maxItems", 64)) fail("INVALID_ARGUMENT", "Invalid array length")
+                for (i in 0 until item.length()) validateObject(item.optJSONObject(i) ?: fail("INVALID_ARGUMENT", "Expected point object"), field.getJSONObject("items"), "$path.$key[$i]")
+            }
+        }
+    }
+    private fun string(description: String) = json("type" to "string", "description" to description)
+    private fun number(description: String) = json("type" to "number", "description" to description)
+    private fun integer(description: String) = json("type" to "integer", "description" to description)
+    private val common = mapOf(
+        "request_id" to string("Unique action ID, retained for 10 minutes per client; reuse exactly on retransmission"),
+        "lease_id" to string("Current control lease"),
+        "observation_id" to string("Observation used to select the target; required with element_id"),
+        "expected_window_id" to integer("Reject a different active window"),
+        "observe_after" to json("type" to "boolean", "description" to "Attach observation after action")
+    )
+    private val point = json("type" to "object", "properties" to json("x" to number("Display pixel x"), "y" to number("Display pixel y")),
+        "required" to JSONArray(listOf("x", "y")), "additionalProperties" to false)
+    private fun tool(name: String, description: String, fields: Map<String, JSONObject> = emptyMap(), required: List<String> = emptyList(), action: Boolean = false): JSONObject {
+        val properties = JSONObject()
+        if (action) common.forEach { (key, value) -> properties.put(key, value) }
+        fields.forEach { (key, value) -> properties.put(key, value) }
+        return json("name" to name, "description" to description, "inputSchema" to json("type" to "object",
+            "properties" to properties, "required" to JSONArray((if (action) listOf("request_id", "lease_id") else emptyList()) + required),
+            "additionalProperties" to false))
+    }
+    fun all(): JSONArray = JSONArray(listOf(
+        tool("get_capabilities", "Read Android capability availability and limitations"),
+        tool("get_status", "Read control state or the retained result of an action", mapOf("request_id" to string("Optional action to query"))),
+        tool("acquire_control", "Acquire exclusive control or renew the supplied active lease", mapOf("ttl_seconds" to integer("5..300, default 60"), "lease_id" to string("Only supply for renewal"))),
+        tool("release_control", "Revoke the lease and queued actions", mapOf("lease_id" to string("Active lease")), listOf("lease_id")),
+        tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("lease_id" to string("Active lease"), "request_id" to string("Omit to cancel all pending actions")), listOf("lease_id")),
+        tool("observe", "Collect a fresh snapshot; screenshots and tree are not atomic", mapOf("mode" to string("tree, screenshot, or both (default)"), "max_dimension" to integer("Screenshot longest side 320..2048, default 1280"))),
+        tool("list_apps", "List discoverable launchable applications"),
+        tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),
+        tool("tap", "Tap a snapshot element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), action = true),
+        tool("long_press", "Long press an element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y"), "duration_ms" to integer("500..5000 for coordinate gesture")), action = true),
+        tool("swipe", "Swipe along 2..64 physical display points", mapOf("points" to json("type" to "array", "items" to point, "minItems" to 2, "maxItems" to 64), "duration_ms" to integer("1..5000, default 600")), listOf("points"), true),
+        tool("scroll", "Scroll a node forward/backward or a rectangular screen region up/down/left/right", mapOf("element_id" to string("Snapshot container"), "direction" to string("forward, backward, up, down, left, right"),
+            "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("direction"), true),
+        tool("input_text", "Replace all text or insert at the reported selection. Insert requires readable text and replaces any selected range", mapOf("element_id" to string("Editable element"), "text" to string("Text, may be empty; max 10000 characters"), "mode" to string("replace or insert")), listOf("observation_id", "element_id", "text", "mode"), true),
+        tool("back", "Android Back", action = true), tool("home", "Android Home", action = true), tool("recents", "Android Recents", action = true),
+        tool("launch_app", "Launch a discoverable package with an Android Intent", mapOf("package_name" to string("Android package")), listOf("package_name"), true)
+    ))
+}

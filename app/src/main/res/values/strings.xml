@@ -1,3 +1,4 @@
 <resources>
-    <string name="app_name">Phone use</string>
+    <string name="app_name">Phone Use</string>
+    <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可通过通知栏随时暂停或停止服务。</string>
 </resources>
