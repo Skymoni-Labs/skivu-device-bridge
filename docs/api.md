@@ -1,14 +1,43 @@
-# MVP API 协议 v0.1
+# MVP API 协议 v0.3
 
 ## 接入与身份
 
-监听 IPv4 `0.0.0.0:8443`，仅 TLS 1.2/1.3。私钥保存在 Android Keystore，应用自动生成自签证书。客户端通过手机上显示的 SHA-256 指纹建立信任；示例 Python 客户端在发送任何请求前校验指纹。
+监听 IPv4 `0.0.0.0:8443`，使用明文 HTTP，不生成证书、不要求指纹校验。端口沿用 8443，所有入口改用 `http://`。配对授权、Bearer token 和撤销机制保留。
 
-`POST /pair`：`{"code":"123456","client_name":"laptop"}`。
+### 配对请求 → 手机批准 → 领取凭证
 
-成功返回 `client_id`、仅返回一次的 `token` 和 `certificate_sha256`。手机手动打开配对窗口，两分钟有效，五次尝试后关闭，一次成功即作废；最多保留 16 个客户端。应用仅持久化 token 的 SHA-256 摘要。关闭服务关闭配对窗口，已配对凭证仍保留。手机可撤销单个凭证，当前控制者被撤销时排队输入也失效。备份和设备迁移不包含凭证。
+旧的 `POST /pair` 和配对码输入流程已移除；已有客户端凭证仍有效。
 
-其他端点必须提供 `Authorization: Bearer TOKEN`。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。拒绝浏览器 Origin，不提供 CORS。每个连接只处理一个 HTTP 请求并关闭；不会因为 HTTP 响应完成而撤销租约。连接池和等待队列有上限。
+1. `POST /pair/request`，正文 `{"client_name":"laptop"}`，无须 Bearer token。HTTP 202 返回：
+
+   ```json
+   {"pairing_id":"UUID","pairing_secret":"随机秘密","verification_code":"123456","status":"pending","expires_in":120,"poll_interval":2}
+   ```
+
+2. 手机 App 显示客户端自报名称、实际来源 IP、核对码和剩余时间。用户核对两端核对码，选择授权或拒绝。没有远程批准接口；通知栏提示点击打开 App。
+3. 客户端每两秒 `POST /pair/status`，正文 `{"pairing_id":"UUID","pairing_secret":"随机秘密"}`。HTTP 200 返回 `{"status":"pending"}` 或 `{"status":"denied"}`。批准后返回：
+
+   ```json
+   {"status":"approved","client_id":"UUID","token":"TOKEN","token_type":"Bearer","api_path":"/api","mcp_path":"/mcp"}
+   ```
+
+4. 此 token 可同时用于 API 和 MCP 的 `Authorization: Bearer TOKEN`。
+
+请求从创建起两分钟过期（批准不延长），过期或服务重启返回 `PAIRING_EXPIRED`。`pairing_secret` 是领取凭证的秘密，不能用核对码代替，也不能写入 URL。为允许丢包后的重复领取，同一请求在过期前返回相同凭证，不会重复签发。仅 token 摘要持久化；完整配对响应仅暂存在内存。关闭服务清空请求，已配对凭证仍保留。
+
+最多保留 16 个请求和 16 个客户端；新请求全局间隔至少五秒，超限 HTTP 429 / `PAIRING_BUSY`。错误 secret 返回 `PAIRING_DENIED`，参数错误返回 `INVALID_ARGUMENT`。手机可撤销单个凭证，撤销也会清除该请求暂存的 token，当前控制者被撤销时排队输入失效。备份和设备迁移不包含凭证。
+
+### Web 入口与传输
+
+`GET /` 是不含凭证和设备数据的公开页面，允许从 App/其他页面跳转（包括 `Sec-Fetch-Site: cross-site`），仍校验 Host；脚本、配对和 API 请求继续使用同源策略。页面禁止被嵌入 frame。
+
+`GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需 Bearer token，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
+
+API/MCP 端点必须提供 `Authorization: Bearer TOKEN`。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `http://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+
+Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `url/token/client_id`，可直接交给 Python 客户端和 MCP stdio 桥接。退出网页仅清除本页凭证，撤销授权需在手机执行。
+
+每个连接只处理一个 HTTP 请求并关闭；不会因为 HTTP 响应完成而撤销租约。连接池和等待队列有上限。
 
 ## 普通 API
 
@@ -95,7 +124,7 @@
 
 重发相同 ID 返回已有结果，不再次输入；不同参数返回 REQUEST_ID_CONFLICT。十分钟之后或进程重启后不能依据去重保证安全重放。客户端必须自行保留不确定请求，并重新观察。
 
-通知“断开”撤销当前租约，已配对凭证仍可重新申请租约；要禁止某客户端再次连接，请撤销它的凭证。“暂停”撤销当前租约及排队输入，需要手机端恢复后重新申请。停止关闭 HTTPS 入口，并使所有尚未执行输入失效。
+通知“断开”撤销当前租约，已配对凭证仍可重新申请租约；要禁止某客户端再次连接，请撤销它的凭证。“暂停”撤销当前租约及排队输入，需要手机端恢复后重新申请。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
 
 ## 主要错误码
 

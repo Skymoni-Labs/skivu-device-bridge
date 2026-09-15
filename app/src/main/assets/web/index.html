@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phone Use · 控制台</title>
+  <style>
+    :root { color-scheme: light; font: 15px/1.6 system-ui,sans-serif; color:#172d36; background:#f1f5f5 }
+    * { box-sizing:border-box } body { margin:0 } main { max-width:1120px; margin:auto; padding:40px 24px }
+    header { display:flex; justify-content:space-between; align-items:center; gap:16px; margin-bottom:28px }
+    h1 { margin:0; font-size:32px; letter-spacing:-1px } h2 { margin:0 0 16px; font-size:19px }
+    p { margin:8px 0 16px } .muted,small { color:#536a72 } .badge { background:#dcebe8; padding:6px 14px; border-radius:20px; white-space:nowrap }
+    .grid { display:grid; grid-template-columns:320px 1fr; gap:20px; align-items:start }
+    section { background:white; border:1px solid #dbe4e5; border-radius:16px; padding:24px; margin-bottom:20px }
+    label { display:block; font-weight:600; margin:12px 0 6px } input,select,textarea { width:100%; padding:11px; border:1px solid #b7c8cc; border-radius:8px; font:inherit; background:#fff; color:inherit }
+    textarea,pre,code { font-family:ui-monospace,Consolas,monospace } textarea { min-height:180px; font-size:13px; resize:vertical }
+    button { cursor:pointer; border:0; background:#12685a; color:white; border-radius:8px; padding:11px 15px; font:inherit; font-weight:600; margin-top:12px }
+    button.secondary { background:#e9f0f0; color:#24434c } button:disabled { opacity:.45; cursor:default } button:focus-visible { outline:3px solid #58b6ab; outline-offset:3px }
+    .buttons { display:flex; gap:8px; flex-wrap:wrap } pre { white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; max-height:480px; overflow:auto; background:#f4f7f7; padding:16px; border-radius:8px }
+    #pair-status,#notice { overflow-wrap:anywhere } #notice { color:#9a361c } #verification { display:block; font-size:32px; letter-spacing:5px; color:#12685a }
+    img { max-width:100%; max-height:600px; object-fit:contain } [hidden] { display:none!important }
+    @media(max-width:760px) { .grid { grid-template-columns:1fr } main { padding:24px 16px } header { align-items:start; flex-direction:column } }
+  </style>
+  <script src="/app.js" defer></script>
+</head>
+<body><main>
+  <header><div><h1>Phone Use</h1><span class="muted">连接手机，调试 API，接入你的 Agent。</span></div><span id="connection" class="badge">尚未配对</span></header>
+  <div id="notice" role="alert"></div>
+  <div class="grid">
+    <aside>
+      <section><h2>01 / 连接手机</h2>
+        <p class="muted">输入客户端名称，发起请求后在手机 App 中授权即可连接。</p>
+        <label for="client-name">客户端名称</label><input id="client-name" maxlength="80" value="Web 控制台" autocomplete="off">
+        <button id="pair">请求配对</button>
+        <div id="pair-status" role="status" aria-live="polite">发起请求后，请打开手机上的 Phone Use 授权。</div>
+        <strong id="verification"></strong>
+        <div class="buttons"><button id="export" class="secondary" disabled>导出连接凭证</button><button id="forget" class="secondary" disabled>退出本页</button></div>
+        <small>凭证仅保留在当前标签页会话。退出本页不会撤销手机授权；可在 App 中撤销客户端。</small>
+      </section>
+      <section><h2>02 / API 与 MCP</h2><p>授权后共用一个 Bearer token。</p><pre id="endpoints"></pre>
+        <p class="muted">导出的 phoneuse.json 可供 Python 客户端和 MCP stdio 桥接使用，含控制凭证，请妥善保管。</p>
+        <pre>python tools/phoneuse_client.py --config phoneuse.json mcp-stdio</pre>
+      </section>
+    </aside>
+    <div>
+      <section><h2>03 / 调用工具</h2>
+        <div class="buttons"><button id="acquire" disabled>获取控制权 · 60 秒</button><button id="release" class="secondary" disabled>释放控制权</button></div>
+        <p id="lease" class="muted">读取状态无需控制权；输入动作需要有效租约。</p>
+        <label for="tool">工具</label><select id="tool" disabled><option>配对后加载工具…</option></select>
+        <p id="description" class="muted"></p>
+        <details><summary>查看参数定义</summary><pre id="schema">尚未加载</pre></details>
+        <label for="arguments">参数 · JSON</label><textarea id="arguments" spellcheck="false">{}</textarea>
+        <div class="buttons"><button id="run" disabled>调用 API</button><button id="new-id" class="secondary" disabled>生成新动作 ID</button></div>
+        <p class="muted">自动补入当前 lease_id 和新动作的 request_id。网络异常时保留原 request_id，请先查询 get_status。</p>
+      </section>
+      <section><h2>调用结果</h2><p id="result-status" role="status" aria-live="polite">等待首次调用</p><img id="screenshot" alt="手机截图" hidden><pre id="result">{}</pre></section>
+    </div>
+  </div>
+</main></body></html>

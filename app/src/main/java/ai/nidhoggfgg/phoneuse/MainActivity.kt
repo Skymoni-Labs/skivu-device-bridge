@@ -35,7 +35,6 @@ class MainActivity : ComponentActivity() {
         setContent { PhoneUseTheme { Dashboard() } }
     }
     private fun startEndpoint() {
-        if (PhoneAccessibilityService.current == null) return
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
@@ -49,6 +48,7 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Dashboard() {
         var tick by remember { mutableIntStateOf(0) }
+        var pairingError by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
         @Suppress("UNUSED_VARIABLE") val refresh = tick
         val service = PhoneUseService.current
@@ -64,13 +64,13 @@ class MainActivity : ComponentActivity() {
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(service?.stateText() ?: "服务未启动", style = MaterialTheme.typography.titleMedium)
-                        Text(if (accessibility) "无障碍服务已授权" else "请先开启 Phone Use 无障碍服务")
+                        Text(if (accessibility) "无障碍服务已授权" else "无障碍未开启；可先配对和调试 API，设备操作需授权无障碍。")
                         Text("操作时请保持亮屏并解锁。可随时通过通知栏暂停、断开或停止。")
                     }
                 }
                 Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("无障碍设置") }
                 if (service == null) {
-                    Button(onClick = { startEndpoint() }, enabled = accessibility) { Text("启动 HTTPS 服务") }
+                    Button(onClick = { startEndpoint() }) { Text("启动 HTTP 服务") }
                     PhoneUseService.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -82,13 +82,30 @@ class MainActivity : ComponentActivity() {
                     OutlinedButton(onClick = { service.controller.revoke(); tick++ }) { Text("撤销当前控制权") }
                     HorizontalDivider()
                     Text("连接与配对", style = MaterialTheme.typography.titleLarge)
-                    SelectionContainer { Text((addresses + "127.0.0.1").joinToString("\n") { "https://$it:8443" } + "\nAPI: /api · MCP: /mcp") }
-                    Text("首次连接请在客户端核对下方证书 SHA-256 指纹，再发送配对码。配对码两分钟有效，限尝试五次，仅能使用一次。")
-                    SelectionContainer { Text(service.identities.fingerprint, style = MaterialTheme.typography.bodySmall) }
-                    Button(onClick = { service.identities.openPairing(); tick++ }) { Text("生成配对码") }
-                    service.identities.pairingCode()?.let { code ->
-                        Text(code, style = MaterialTheme.typography.headlineLarge)
-                        TextButton(onClick = { service.identities.closePairing(); tick++ }) { Text("关闭配对") }
+                    SelectionContainer { Text((addresses + "127.0.0.1").joinToString("\n") { "http://$it:8443" } + "\nAPI: /api · MCP: /mcp") }
+                    Text("在电脑浏览器打开上方地址即可使用 Web 控制台。从网页或客户端发起配对请求，然后在这里授权。")
+                    OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("http://127.0.0.1:8443/"))) }) { Text("打开 Web 控制台") }
+                    Text("配对请求", style = MaterialTheme.typography.titleMedium)
+                    val pending = service.identities.pairing.pending()
+                    if (pending.isEmpty()) Text("等待客户端发起配对…")
+                    pairingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    pending.forEach { request ->
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(request.name, style = MaterialTheme.typography.titleMedium)
+                                Text("来源：${request.source} · 名称由客户端提供")
+                                Text("核对码：${request.verificationCode}", style = MaterialTheme.typography.headlineSmall)
+                                Text("请与客户端核对。授权后可读取屏幕及控制手机，直到撤销凭证。")
+                                Text("剩余 ${((request.deadline - android.os.SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)} 秒")
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = {
+                                        pairingError = runCatching { service.identities.pairing.decide(request.id, true) }.exceptionOrNull()?.message
+                                        tick++
+                                    }) { Text("授权") }
+                                    OutlinedButton(onClick = { service.identities.pairing.decide(request.id, false); tick++ }) { Text("拒绝") }
+                                }
+                            }
+                        }
                     }
                     Text("已配对客户端", style = MaterialTheme.typography.titleMedium)
                     val clients = service.identities.clients()

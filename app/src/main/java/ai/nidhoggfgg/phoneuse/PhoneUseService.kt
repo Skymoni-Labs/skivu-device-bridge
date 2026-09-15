@@ -11,7 +11,7 @@ import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
-import ai.nidhoggfgg.phoneuse.server.HttpsServer
+import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
 
 class PhoneUseService : Service() {
@@ -19,7 +19,7 @@ class PhoneUseService : Service() {
         private set
     lateinit var controller: DeviceController
         private set
-    private var server: HttpsServer? = null
+    private var server: HttpServer? = null
     private var starting = false
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var lastClient: String? = null
@@ -58,24 +58,25 @@ class PhoneUseService : Service() {
                         handler.post { if (!destroyed) updateNotification() }
                     }
                     try {
-                        server = HttpsServer(identities, controller) { client ->
+                        server = HttpServer(identities, controller, assets) { client ->
                             lastClient = client; lastContact = SystemClock.elapsedRealtime()
                             handler.post { if (!destroyed) updateNotification() }
                         }.also { it.start() }
                         current = this
                         lastError = null
                         handler.post(refresh)
-                    } catch (e: Exception) { lastError = "HTTPS 启动失败：${e.javaClass.simpleName} ${e.message.orEmpty()}"; stopSelf() }
+                    } catch (e: Exception) { lastError = "HTTP 启动失败：${e.javaClass.simpleName} ${e.message.orEmpty()}"; stopSelf() }
                     starting = false
                 }
             } catch (e: Exception) {
-                lastError = "证书初始化失败：${e.javaClass.simpleName}"
+                lastError = "客户端存储初始化失败：${e.javaClass.simpleName}"
                 handler.post { stopSelf() }
             }
         }, "phone-use-start").start()
     }
     fun revokeClient(id: String) {
         identities.revoke(id)
+        identities.pairing.revoked(id)
         if (controller.gate.current()?.client == id) controller.revoke()
         if (lastClient == id) lastClient = null
         updateNotification()
@@ -84,6 +85,7 @@ class PhoneUseService : Service() {
         if (!::controller.isInitialized) return "服务正在启动"
         val lease = controller.gate.current()
         return when {
+            identities.pairing.pending().isNotEmpty() -> "收到配对请求 · 点击打开 App 授权"
             controller.gate.paused -> "控制已暂停"
             lease != null -> "手机正在被控制 · ${identities.clients().find { it.first == lease.client }?.second ?: "客户端"}"
             lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> "客户端最近已连接，等待控制"
@@ -111,7 +113,7 @@ class PhoneUseService : Service() {
         destroyed = true
         if (current === this) current = null
         if (::controller.isInitialized) controller.stop()
-        if (::identities.isInitialized) identities.closePairing()
+        if (::identities.isInitialized) identities.pairing.clear()
         server?.stop(); server = null
         handler.removeCallbacksAndMessages(null)
         stopForeground(STOP_FOREGROUND_REMOVE)
