@@ -24,3 +24,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Phone use"
 include(":app")
+include(":fixture")

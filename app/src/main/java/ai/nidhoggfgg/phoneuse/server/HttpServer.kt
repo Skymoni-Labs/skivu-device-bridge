@@ -37,7 +37,8 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     client.soTimeout = 10_000
                     clients.add(client)
                     try { workers.execute {
-                        val timeout = deadlines.schedule({ runCatching { client.close() } }, 40, TimeUnit.SECONDS)
+                        // Includes request parsing, bounded queueing and up to 60 seconds of condition observation.
+                        val timeout = deadlines.schedule({ runCatching { client.close() } }, 90, TimeUnit.SECONDS)
                         try { client.use { handle(it) } } finally { timeout.cancel(false); clients.remove(client) }
                     } }
                     catch (_: java.util.concurrent.RejectedExecutionException) { clients.remove(client); client.close() }
@@ -233,16 +234,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 if ((0 until ToolCatalog.all().length()).none { ToolCatalog.all().getJSONObject(it).getString("name") == name })
                     return rpcError(-32602, "Unknown tool")
                 val value = callTool(client, name, params.optJSONObject("arguments") ?: JSONObject())
-                val content = JSONArray()
-                // Images are also emitted as MCP image blocks for clients with visual models.
-                val copy = JSONObject(value.toString())
-                val observation = if (name == "observe") copy else copy.optJSONObject("observation")
-                val screenshot = observation?.optJSONObject("screenshot")
-                if (screenshot?.optBoolean("available") == true) {
-                    content.put(json("type" to "image", "mimeType" to screenshot.getString("mime_type"), "data" to screenshot.remove("data_base64")))
-                }
-                content.put(json("type" to "text", "text" to copy.toString()))
-                resultIdentity(json("content" to content, "isError" to value.has("error")))
+                resultIdentity(serializeMcpToolResult(value))
             }
             else -> return rpcError(-32601, "Method not found")
         }
@@ -272,11 +264,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         return resultIdentity(JSONObject(controller.call(client, name, arguments).toString()))
     }
 
-    private fun resultIdentity(result: JSONObject): JSONObject = result.apply {
-        put("device_id", identities.deviceIdentity.id)
-        put("service_instance_id", serviceInstanceId)
-        listOf("request", "execution", "observation").forEach { key -> optJSONObject(key)?.let(::resultIdentity) }
-    }
+    private fun resultIdentity(result: JSONObject): JSONObject = attachResultIdentity(result, identities.deviceIdentity.id, serviceInstanceId)
 
     private fun write(socket: Socket, response: Response) {
         val body = response.body?.let { if (it.has("jsonrpc")) it else resultIdentity(it) }
@@ -290,4 +278,34 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         socket.outputStream.write(bytes); socket.outputStream.flush()
     }
     companion object { val versions = setOf("2025-03-26", "2025-06-18", "2025-11-25") }
+}
+
+private val nestedResultKeys = listOf("request", "execution", "observation", "recovery_observation", "last_observation")
+
+/** Decorates protocol result containers only; node metadata is deliberately not treated as a result. */
+internal fun attachResultIdentity(result: JSONObject, deviceId: String, serviceInstanceId: String): JSONObject = result.apply {
+    put("device_id", deviceId)
+    put("service_instance_id", serviceInstanceId)
+    nestedResultKeys.forEach { key -> optJSONObject(key)?.let { attachResultIdentity(it, deviceId, serviceInstanceId) } }
+}
+
+/** Traverses retained and recovery snapshots without mutating objects kept in the deduplication cache. */
+internal fun serializeMcpToolResult(value: JSONObject): JSONObject {
+    val copy = JSONObject(value.toString())
+    val content = JSONArray()
+    var incomplete = false
+    fun visit(result: JSONObject) {
+        if (result.has("error") || result.optString("observation_status") in setOf("failed", "condition_timeout") ||
+            result.optJSONObject("screenshot")?.opt("available") == false || result.optJSONObject("tree")?.opt("available") == false ||
+            result.optJSONObject("condition")?.optString("status")?.let { it != "satisfied" } == true) incomplete = true
+        result.optJSONObject("screenshot")?.let { screenshot ->
+            if (screenshot.optBoolean("available") && screenshot.opt("data_base64") is String) {
+                content.put(json("type" to "image", "mimeType" to screenshot.getString("mime_type"), "data" to screenshot.remove("data_base64")))
+            }
+        }
+        nestedResultKeys.forEach { key -> result.optJSONObject(key)?.let(::visit) }
+    }
+    visit(copy)
+    content.put(json("type" to "text", "text" to copy.toString()))
+    return json("content" to content, "isError" to incomplete)
 }

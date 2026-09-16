@@ -19,8 +19,14 @@ class DeviceController(
     private data class Request(val client: String, val id: String, val signature: String, val created: Long,
         val result: CompletableFuture<JSONObject> = CompletableFuture(),
         @Volatile var phase: String = "accepted", @Volatile var cancelled: Boolean = false,
+        @Volatile var actionExecuted: Boolean? = false,
+        @Volatile var observationStatus: String = "not_requested",
+        @Volatile var observationPurpose: String? = null,
         @Volatile var retainedChars: Int = 0)
     private val requests = LinkedHashMap<String, Request>()
+    private val retentionBudget = 8_000_000L
+    private val terminalResultReserve = 4096
+    private fun retainedSize(request: Request) = maxOf(request.retainedChars, terminalResultReserve).toLong()
     private data class Reservation(val client: String, val id: String, val expires: Long)
     private var reservation: Reservation? = null // Guarded by requests, including queue admission.
     @Volatile private var active: Request? = null
@@ -49,6 +55,7 @@ class DeviceController(
                 if (name in actionNames) {
                     put("action_executed", false)
                     if (args.has("request_id")) put("request_id", args.opt("request_id"))
+                    addRecovery(this)
                 }
             }
         }
@@ -72,12 +79,19 @@ class DeviceController(
                 }
                 val value = if (name == "observe") backend.observe(args, client, check) else backend.listApps()
                 checkAccess(client)
-                if (gate.paused || gate.generation != generation) fail("CANCELLED", "Read invalidated")
+                // A backend failure may include a valid earlier snapshot. Preserve it after cancellation,
+                // while a revoked credential or stopped service still cannot receive scene data.
+                if (!value.has("error") && (gate.paused || gate.generation != generation)) fail("CANCELLED", "Read invalidated")
+                if (name == "observe") { normalizeObservation(value); addRecovery(value) }
                 result.complete(value)
-            } catch (e: Exception) { result.complete(errorResult(e)) }
+            } catch (e: Exception) { result.complete(if (name == "observe") observationFailure(e, args) else errorResult(e)) }
         } } catch (_: java.util.concurrent.RejectedExecutionException) { fail("BUSY", "Device queue is full") }
-        return try { result.get(15, TimeUnit.SECONDS) } catch (_: TimeoutException) {
-            result.complete(errorResult(DeviceError("TIMEOUT", "Observation timed out")))
+        // A condition observation can legitimately outlive the action's 15-second response window.
+        // The backend owns the collection budget; this extra allowance is for bounded queueing.
+        val waitMs = if (name == "observe") args.optLong("timeout_ms", if (args.has("wait_until")) 10_000 else 20_000) + 15_000 else 15_000
+        return try { result.get(waitMs, TimeUnit.MILLISECONDS) } catch (_: TimeoutException) {
+            result.complete(if (name == "observe") observationFailure(DeviceError("TIMEOUT", "Observation queue or collection timed out"), args)
+                else errorResult(DeviceError("TIMEOUT", "Read timed out")))
             result.get()
         }
     }
@@ -94,7 +108,7 @@ class DeviceController(
                 request = old
             } else {
                 checkReservation(client, args)
-                if (requests.size >= 256 || requests.values.sumOf { it.retainedChars.toLong() } >= 8_000_000)
+                if (requests.size >= 256 || requests.values.sumOf(::retainedSize) + terminalResultReserve > retentionBudget)
                     fail("BUSY", "Deduplication cache full; retry later")
                 val generation = gate.generation
                 gate.check(generation)
@@ -102,14 +116,13 @@ class DeviceController(
                 requests[key] = request
                 try { executor.execute { execute(request, name, args, generation) } }
                 catch (_: java.util.concurrent.RejectedExecutionException) {
-                    request.result.complete(errorResult(DeviceError("BUSY", "Device queue is full"))
+                    complete(request, errorResult(DeviceError("BUSY", "Device queue is full"))
                         .put("request_id", id).put("action_executed", false))
                 }
             }
         }
         return try { request.result.get(15, TimeUnit.SECONDS) } catch (_: TimeoutException) {
-            json("state" to request.phase, "request_id" to id, "action_executed" to if (request.phase == "accepted") false else null,
-                "message" to "Still pending; query get_status with this request_id. Do not replay with a new ID.")
+            request.result.getNow(pending(request))
         }
     }
     private fun execute(request: Request, name: String, args: JSONObject, generation: Long) {
@@ -123,20 +136,18 @@ class DeviceController(
         var dispatched = false
         try {
             check()
-            synchronized(requests) {
-                if (requests.values.sumOf { it.retainedChars.toLong() } >= 8_000_000) fail("BUSY", "Result retention budget is full")
-            }
             active = request
             request.phase = "executing"
+            request.actionExecuted = null
             dispatched = true
             val value = backend.act(name, args, request.client, check)
+            request.actionExecuted = true
             val result = json("state" to "executed", "request_id" to request.id, "action_executed" to true, "execution" to value)
             if (args.optBoolean("observe_after", false)) {
-                try { check(); result.put("observation", backend.observe(JSONObject(), request.client, check)); check() }
-                catch (e: Exception) { result.put("observation", errorResult(e)) }
+                result.put("observation", observeForRequest(request, args, "after_action", check))
+                result.put("observation_status", request.observationStatus)
             }
-            request.retainedChars = result.toString().length
-            request.result.complete(result)
+            complete(request, result)
         } catch (e: Exception) {
             val state = when ((e as? DeviceError)?.code) {
                 "CANCELLED", "UNAUTHORIZED", "STOPPED" -> "cancelled"
@@ -145,10 +156,132 @@ class DeviceController(
             }
             val result = errorResult(e, state).put("request_id", request.id)
             if (!result.has("action_executed")) result.put("action_executed", if (!dispatched) false else JSONObject.NULL)
-            request.retainedChars = result.toString().length
-            request.result.complete(result)
+            request.actionExecuted = result.opt("action_executed") as? Boolean
+            // Only terminal, explicitly non-executed target-validation errors may read a recovery snapshot.
+            // Access, generation, cancellation and reservation checks also govern this read.
+            if (args.optBoolean("observe_on_rejection") && result.opt("action_executed") == false &&
+                state == "failed" && (e as? DeviceError)?.code in recoveryObservationErrors) {
+                result.put("recovery_observation", observeForRequest(request, args, "after_rejection", check))
+                result.put("observation_status", request.observationStatus)
+            }
+            complete(request, result)
         } finally { active = null }
     }
+    private fun observationFailure(error: Exception, args: JSONObject): JSONObject = errorResult(error).apply {
+        put("observation_status", "failed")
+        if (args.has("wait_until")) put("condition", json("status" to "unknown", "timed_out" to ((error as? DeviceError)?.code in setOf("TIMEOUT", "OBSERVATION_TIMEOUT"))))
+        addRecovery(this)
+    }
+    private fun observeForRequest(request: Request, args: JSONObject, purpose: String, check: () -> Unit): JSONObject {
+        request.observationPurpose = purpose
+        request.observationStatus = "observing"
+        val options = args.optJSONObject("observation_options") ?: JSONObject()
+        val observation = try {
+            check()
+            backend.observe(JSONObject(options.toString()), request.client, check).also {
+                checkAccess(request.client)
+                if (!it.has("error")) check()
+            }
+        } catch (e: Exception) { observationFailure(e, options) }
+        normalizeObservation(observation)
+        request.observationStatus = observation.getString("observation_status")
+        return observation
+    }
+    private fun normalizeObservation(observation: JSONObject) {
+        val status = when {
+            observation.has("error") -> "failed"
+            observation.has("observation_status") -> observation.getString("observation_status")
+            observation.optJSONObject("condition")?.optString("status")?.let { it != "satisfied" } == true -> "condition_timeout"
+            else -> "complete"
+        }
+        observation.put("observation_status", status)
+    }
+    private fun pending(request: Request): JSONObject = json(
+        "state" to request.phase, "request_id" to request.id, "action_executed" to request.actionExecuted,
+        "observation_status" to request.observationStatus, "observation_purpose" to request.observationPurpose,
+        "message" to "Still pending; query get_status with this request_id. Do not replay with a new ID."
+    ).also(::addRecovery)
+    private fun complete(request: Request, result: JSONObject) = synchronized(requests) {
+        addRecovery(result)
+        val remaining = retentionBudget - requests.values.filter { it !== request }.sumOf(::retainedSize)
+        if (result.toString().length > remaining) {
+            var observationOmitted = false
+            for (key in listOf("observation", "recovery_observation")) if (result.has(key)) {
+                val previous = result.getJSONObject(key)
+                val omitted = observationFailure(DeviceError("CACHE_BUDGET_EXCEEDED", "Attached observation omitted to preserve the retained action result"), JSONObject())
+                    .put("omitted_for_retention", true)
+                if (previous.has("condition")) omitted.put("condition", json("status" to "unknown", "timed_out" to false))
+                result.put(key, omitted)
+                observationOmitted = true
+            }
+            if (observationOmitted) {
+                result.put("observation_status", "failed")
+                request.observationStatus = "failed"
+                addRecovery(result)
+            }
+        }
+        if (result.toString().length > remaining) {
+            // Window/event diagnostics and backend execution metadata can also exceed the last
+            // reserved slot. Keep the terminal facts and original rejection classification.
+            result.put("diagnostics_omitted_for_retention", true)
+            result.optJSONObject("error")?.let { error ->
+                val retained = JSONObject()
+                listOf("code", "message", "reason", "age_ms", "snapshot_age_ms", "snapshot_ui_version", "current_ui_version").forEach { key ->
+                    if (error.has(key)) retained.put(key, error.get(key))
+                }
+                result.put("error", retained)
+            }
+            result.optJSONObject("execution")?.let { execution ->
+                val retained = json("details_omitted_for_retention" to true)
+                listOf("mechanism", "confirmation", "business_success", "cursor_restored").forEach { key ->
+                    if (execution.has(key)) retained.put(key, execution.get(key))
+                }
+                result.put("execution", retained)
+            }
+            // Error prose may contain platform-supplied text. Bound it by serialized size, not
+            // raw character count (JSON escaping can multiply that count), without changing code/reason.
+            val error = result.optJSONObject("error")
+            val message = error?.opt("message") as? String
+            if (message != null && result.toString().length > remaining) {
+                error.put("message_truncated_for_retention", true)
+                var low = 0
+                var high = message.length
+                while (low < high) {
+                    val middle = (low + high + 1) / 2
+                    error.put("message", message.take(middle))
+                    if (result.toString().length <= remaining) low = middle else high = middle - 1
+                }
+                error.put("message", message.take(low))
+            }
+        }
+        request.retainedChars = result.toString().length
+        request.result.complete(result)
+    }
+    private fun unavailableChannel(result: JSONObject): Boolean =
+        result.optJSONObject("screenshot")?.opt("available") == false || result.optJSONObject("tree")?.opt("available") == false
+    private fun addRecovery(result: JSONObject) {
+        val state = result.optString("state")
+        val channelFailed = unavailableChannel(result) || result.optJSONObject("observation")?.let(::unavailableChannel) == true
+        val category = when {
+            state in setOf("accepted", "executing") -> "wait_original_request"
+            !result.has("action_executed") && (channelFailed || result.optString("observation_status") in setOf("failed", "condition_timeout")) -> "refresh_observation"
+            state == "unknown" || (state in setOf("failed", "cancelled") && result.opt("action_executed") != false) -> "reconcile_result"
+            state == "executed" && (channelFailed || result.optString("observation_status") in setOf("failed", "condition_timeout")) -> "refresh_observation"
+            state in setOf("failed", "cancelled") && result.opt("action_executed") == false -> "refresh_observation"
+            else -> return
+        }
+        val message = when (category) {
+            "wait_original_request" -> "Query the original request_id until terminal; do not submit a replacement action."
+            "reconcile_result" -> "Verify the original request and current scene before deciding; execution is uncertain, so do not replay automatically."
+            else -> if (result.opt("action_executed") == true)
+                "The input executed. Obtain a fresh observation before deciding the next action; do not repeat the original input."
+            else if (!result.has("action_executed")) "The observation is incomplete. Obtain a fresh observation before deciding the next action."
+            else "The request terminated without executing. Observe the current scene and select a validated target before deciding a new action."
+        }
+        result.put("recovery", json("category" to category, "advisory" to true, "replay_action" to false,
+            "suggested_tool" to if (category == "wait_original_request") "get_status" else "observe", "message" to message))
+    }
+    private val recoveryObservationErrors = setOf("STALE_OBSERVATION", "STALE_ELEMENT", "ELEMENT_UNAVAILABLE", "WINDOW_MISMATCH", "ACTION_UNSUPPORTED")
     private fun cancel(client: String, args: JSONObject): JSONObject {
         val id = args.optString("request_id")
         cancelPending(client, id.takeIf { it.isNotEmpty() })
@@ -157,7 +290,7 @@ class DeviceController(
     private fun cancelPending(client: String? = null, id: String? = null) { synchronized(requests) {
         requests.values.filter { !it.result.isDone && (client == null || it.client == client) && (id == null || it.id == id) }.forEach {
             it.cancelled = true
-            if (it.phase == "accepted") it.result.complete(errorResult(DeviceError("CANCELLED", "Request cancelled before execution"), "cancelled")
+            if (it.phase == "accepted") complete(it, errorResult(DeviceError("CANCELLED", "Request cancelled before execution"), "cancelled")
                 .put("request_id", it.id).put("action_executed", false))
         }
     } }
@@ -213,7 +346,7 @@ class DeviceController(
         }
         if (id.isNotEmpty()) synchronized(requests) {
             val request = requests["$client:$id"] ?: fail("REQUEST_NOT_FOUND", "No retained request with this ID")
-            result.put("request", request.result.getNow(json("state" to request.phase, "request_id" to id)))
+            result.put("request", request.result.getNow(pending(request)))
         }
         return result
     }

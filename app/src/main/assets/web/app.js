@@ -36,7 +36,7 @@ async function request(path, payload, legacyToken) {
   if (payload !== undefined) headers['Content-Type'] = 'application/json';
   if (legacyToken) headers.Authorization = `Bearer ${legacyToken}`;
   const response = await fetch(path, { method: payload === undefined ? 'GET' : 'POST', headers,
-    credentials: 'same-origin', body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(30000) });
+    credentials: 'same-origin', body: payload === undefined ? undefined : JSON.stringify(payload), signal: AbortSignal.timeout(payload?.tool === 'observe' ? 90000 : 30000) });
   const value = await response.json();
   if (response.status === 401) {
     credential = null; clearResult(); sessionStorage.removeItem('phoneuse.credential'); controls();
@@ -155,22 +155,70 @@ $('pair').onclick = async () => {
   } catch (error) { notice(error); }
   finally { busy = false; controls(); }
 };
+function resultObjects(value, path = []) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return [{ value, path }, ...['request', 'observation', 'recovery_observation', 'last_observation']
+    .flatMap(key => resultObjects(value[key], [...path, key]))];
+}
+function activeObservations(value) {
+  return [
+    ...(['observation_id', 'tree', 'screenshot', 'condition'].some(key => key in value) ? [value] : []),
+    value.observation, value.recovery_observation
+  ].filter(item => item && typeof item === 'object');
+}
+function observationIncomplete(value) {
+  return ['observing', 'failed', 'condition_timeout'].includes(value.observation_status) || activeObservations(value).some(item =>
+    item.error || ['observing', 'failed', 'condition_timeout'].includes(item.observation_status) ||
+    (item.condition && (item.condition.status !== 'satisfied' || item.condition.timed_out)) ||
+    item.tree?.available === false || item.screenshot?.available === false);
+}
+const recoveryLabels = {
+  refresh_observation: '重新观察并重新选择目标。',
+  wait_original_request: '使用原 request_id 查询 get_status，等待原请求完成。',
+  reconcile_result: '核对原请求结果和当前界面。',
+  choose_explicit_target: '根据新观察选择唯一、明确的目标。'
+};
+function resultStatus(value) {
+  const result = !value.error && value.request && typeof value.request === 'object' ? value.request : value;
+  if (result.state === 'accepted') return '动作仍在排队；使用原 request_id 查询 get_status，请勿重新发起动作。';
+  if (result.state === 'executing') {
+    const progress = result.observation_purpose === 'after_rejection' && result.action_executed === false ? '动作未执行，正在读取恢复观察' : result.action_executed === true ? '动作已执行，正在等待观察' : '动作正在执行';
+    return progress + '；使用原 request_id 查询 get_status，请勿重新发起动作。';
+  }
+  if (result.state === 'unknown') return '动作结果未知；查询原 request_id 并观察现场，请勿重放动作。';
+  const recovery = recoveryLabels[result.recovery?.category];
+  const hint = recovery ? ` 恢复建议：${recovery}建议不保证下一次操作成功。` : '';
+  if (result.error) return `操作失败：${messages[result.error.code] || result.error.message}` +
+    (result.recovery_observation ? (observationIncomplete(result.recovery_observation) ? ' 恢复观察未完成。' : ' 已附带恢复观察，请检查其采集时间。') : '') + hint;
+  if (observationIncomplete(result)) {
+    const conditions = activeObservations(result).map(item => item.condition).filter(Boolean);
+    const detail = conditions.some(item => item.status === 'unknown') ? '当前条件未知' : conditions.some(item => item.status === 'ambiguous') ? '目标匹配有歧义' : conditions.some(item => item.status !== 'satisfied') ? '条件未满足' : activeObservations(result).some(item => item.error) ? '观察采集失败' : '请求的树或截图不可用';
+    return `${result.action_executed === true || result.state === 'executed' ? '动作已执行；' : ''}观察未完成（${detail}）。请独立调用 observe；请勿重放动作。` + hint;
+  }
+  return '已返回 · ' + (result.state || '完成') + hint;
+}
 function showResult(value) {
   const copy = JSON.parse(JSON.stringify(value));
-  const shot = (copy.observation || copy).screenshot;
+  const observations = resultObjects(copy);
+  const candidates = observations.filter(item => item.value.screenshot?.available && item.value.screenshot.mime_type === 'image/jpeg' && item.value.screenshot.data_base64);
+  candidates.sort((a, b) => (b.value.captured_at_ms || 0) - (a.value.captured_at_ms || 0));
+  const selected = candidates[0];
+  const shot = selected?.value.screenshot;
   $('image-result').hidden = true; $('image-result').open = false; $('screenshot').removeAttribute('src');
-  if (shot?.available && shot.mime_type === 'image/jpeg' && shot.data_base64) {
+  if (shot) {
     $('screenshot').src = `data:image/jpeg;base64,${shot.data_base64}`;
-    $('image-result').hidden = false; shot.data_base64 = '(见下方截图附件)';
+    $('image-result').hidden = false;
+    copy.screenshot_display_source = [...selected.path, 'screenshot'].join('.');
   }
+  for (const item of observations) if (item.value.screenshot?.data_base64) item.value.screenshot.data_base64 = item.value.screenshot === shot ? '(见下方截图附件)' : '(已省略其他截图数据)';
   $('result').textContent = JSON.stringify(copy, null, 2);
-  $('result-status').textContent = value.error ? `操作失败：${messages[value.error.code] || value.error.message}` : '已返回 · ' + (value.state || '完成');
+  $('result-status').textContent = resultStatus(value);
 }
 async function call(tool, args) {
   const result = await request('/api', { tool, arguments: args });
   showResult(result);
   if (result.error) {
-    throw Object.assign(new Error(result.error.message), { code: result.error.code, state: result.state });
+    throw Object.assign(new Error(result.error.message), { code: result.error.code, state: result.state, resultShown: true });
   }
   return result;
 }
@@ -178,7 +226,8 @@ async function execute(work) {
   if (busy) return;
   busy = true; notice(null); controls(); $('result-status').textContent = '正在处理…';
   try { await work(); } catch (error) {
-    notice(error); $('result-status').textContent = '调用未成功。网络异常时请用原 request_id 调用 get_status 查询结果。';
+    notice(error);
+    if (!error.resultShown) $('result-status').textContent = '调用未成功。网络异常时请用原 request_id 调用 get_status 查询结果，请勿重放动作。';
   } finally { busy = false; controls(); }
 }
 $('search').oninput = renderList;

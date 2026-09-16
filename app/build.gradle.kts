@@ -53,3 +53,9 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+
+// The real-device suite launches the separate fixture package. Installation must finish before
+// instrumentation starts; independent command-line tasks may otherwise execute in parallel.
+tasks.matching { it.name == "connectedDebugAndroidTest" }.configureEach {
+    dependsOn(":fixture:installDebug")
+}

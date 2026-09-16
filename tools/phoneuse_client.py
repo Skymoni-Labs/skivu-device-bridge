@@ -47,7 +47,10 @@ def origin(value):
 
 def http_request(config, endpoint, payload=None, authenticate=True, method="POST"):
     url = urlsplit(origin(config["url"]))
-    connection = http.client.HTTPConnection(url.hostname, url.port or 8443, timeout=25)
+    # Standalone conditional reads can use a 60 s budget plus queueing time.
+    # Actions still return their original request state after the 15 s window.
+    tool = (payload or {}).get("tool") if endpoint == "/api" else ((payload or {}).get("params") or {}).get("name")
+    connection = http.client.HTTPConnection(url.hostname, url.port or 8443, timeout=90 if tool == "observe" else 25)
     headers = {"Accept": "application/json, text/event-stream"}
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -230,12 +233,18 @@ class Connection:
 
     @staticmethod
     def _check_response(value, device_id, instance=None):
-        if not isinstance(value, dict) or not value.get("device_id") or not value.get("service_instance_id"):
+        if not isinstance(value, dict):
             raise BridgeError("IDENTITY_UNAVAILABLE", "Response lacks device/service identity; do not trust or replay the request", device_id, action_executed=None)
-        if value["device_id"] != device_id:
-            raise BridgeError("DEVICE_IDENTITY_MISMATCH", "Response came from a different device; do not replay the request", device_id, action_executed=None)
-        if instance and value["service_instance_id"] != instance:
-            raise BridgeError("SERVICE_INSTANCE_CHANGED", "Phone service restarted during the request; query status and observe again; do not replay actions", device_id, action_executed=None)
+        for path, item in result_objects(value):
+            # Older phones may omit nested identity; never ignore a supplied one.
+            if path and not ("device_id" in item or "service_instance_id" in item):
+                continue
+            if not item.get("device_id") or not item.get("service_instance_id"):
+                raise BridgeError("IDENTITY_UNAVAILABLE", "Response lacks device/service identity; do not trust or replay the request", device_id, action_executed=None)
+            if item["device_id"] != device_id:
+                raise BridgeError("DEVICE_IDENTITY_MISMATCH", "Response came from a different device; do not replay the request", device_id, action_executed=None)
+            if instance and item["service_instance_id"] != instance:
+                raise BridgeError("SERVICE_INSTANCE_CHANGED", "Phone service restarted during the request; query status and observe again; do not replay actions", device_id, action_executed=None)
 
     def _send_locked(self, device_id, endpoint, payload):
         device = self._device(device_id)
@@ -427,20 +436,35 @@ class Connection:
                     if not continue_on_error:
                         effective = effective_result(item["tool"], result)
                         blocked = bool(effective.get("error") or effective.get("state") in ("failed", "cancelled", "unknown", "accepted", "executing") or
-                                       (effective.get("observation") or {}).get("error"))
+                                       observation_incomplete(effective, item.get("arguments", {})))
                 results.append({"index": index, "device_id": device_id, "tool": item["tool"], "result": without_image_data(result)})
             return results
         with ThreadPoolExecutor(max_workers=min(16, len(groups))) as pool:
             results = sorted((item for group in pool.map(run, groups.values()) for item in group), key=lambda item: item["index"])
         summary = {"total": len(results), "succeeded": 0, "failed": 0, "pending": 0, "unknown": 0, "skipped": 0,
-                   "states": {}, "error_codes": {}, "observation_error_codes": {}}
+                   "states": {}, "error_codes": {}, "observation_error_codes": {},
+                   "observation_incomplete": 0, "observation_statuses": {}, "condition_statuses": {}}
         for item in results:
             result = effective_result(item["tool"], item["result"])
             state = result.get("state", "failed" if result.get("error") else "completed")
             summary["states"][state] = summary["states"].get(state, 0) + 1
             outcome = "pending" if state in ("accepted", "executing") else state if state in ("unknown", "skipped") else "failed" if state in ("failed", "cancelled") or result.get("error") else "succeeded"
             summary[outcome] += 1
-            for value, key in ((result, "error_codes"), (result.get("observation") or {}, "observation_error_codes")):
+            summary["observation_incomplete"] += int(observation_incomplete(result, calls[item["index"]].get("arguments", {})))
+            active = list(active_observations(result))
+            statuses = {value.get("observation_status") for value in [result, *active] if value.get("observation_status")}
+            for status in statuses:
+                summary["observation_statuses"][status] = summary["observation_statuses"].get(status, 0) + 1
+            for value in active:
+                status = (value.get("condition") or {}).get("status")
+                if status:
+                    summary["condition_statuses"][status] = summary["condition_statuses"].get(status, 0) + 1
+            errors = [(result, "error_codes")]
+            if item["tool"] == "observe":
+                errors.append((result, "observation_error_codes"))
+            errors.extend((value, "observation_error_codes") for path, value in result_objects(result)
+                          if path and path[0] in ("observation", "recovery_observation", "last_observation"))
+            for value, key in errors:
                 error = value.get("error")
                 if isinstance(error, dict) and error.get("code"):
                     code = error["code"]
@@ -452,6 +476,44 @@ def effective_result(tool, result):
     """A request status poll reports its action state inside `request`."""
     request = result.get("request")
     return request if tool == "get_status" and not result.get("error") and isinstance(request, dict) else result
+
+
+RESULT_CHILDREN = ("request", "observation", "recovery_observation", "last_observation")
+
+
+def result_objects(value, path=()):
+    """Visit protocol result/observation envelopes, never arbitrary tree nodes."""
+    if not isinstance(value, dict):
+        return
+    yield path, value
+    for key in RESULT_CHILDREN:
+        if isinstance(value.get(key), dict):
+            yield from result_objects(value[key], (*path, key))
+
+
+def active_observations(result):
+    """Historical last_observation explains failures; it cannot establish readiness."""
+    if any(key in result for key in ("observation_id", "tree", "screenshot", "condition")):
+        yield result
+    for key in ("observation", "recovery_observation"):
+        if isinstance(result.get(key), dict):
+            yield result[key]
+
+
+def observation_incomplete(result, arguments=None):
+    if result.get("observation_status") in ("observing", "failed", "condition_timeout"):
+        return True
+    if (arguments or {}).get("observe_after") and result.get("state") == "executed" and not isinstance(result.get("observation"), dict):
+        return True
+    for observation in active_observations(result):
+        if observation.get("error") or observation.get("observation_status") in ("observing", "failed", "condition_timeout"):
+            return True
+        condition = observation.get("condition")
+        if isinstance(condition, dict) and (condition.get("status") != "satisfied" or condition.get("timed_out")):
+            return True
+        if any(isinstance(observation.get(part), dict) and observation[part].get("available") is False for part in ("tree", "screenshot")):
+            return True
+    return False
 
 
 DEVICE_FIELDS = {"device_id": {"type": "string", "description": "Stable installation ID returned by phoneuse_connect/list_devices"}}
@@ -469,7 +531,7 @@ CONNECTION_TOOLS = [
                {"refresh": {"type": "boolean", "default": True}}),
     local_tool("phoneuse_call", "Call one phone tool by explicit device_id. Use acquire_device/release_device for optional developer reservations. Never replay uncertain actions.",
                {**DEVICE_FIELDS, "tool": {"type": "string"}, "arguments": {"type": "object"}}, ("device_id", "tool")),
-    local_tool("phoneuse_batch", "Run explicit calls in order per device and concurrently across devices without retries. Stop that device's remaining calls on incomplete/error results unless continue_on_error is explicit. Summarize action states and observation errors separately. Images omitted.",
+    local_tool("phoneuse_batch", "Run explicit calls in order per device and concurrently across devices without retries. Stop that device's remaining calls on pending actions, unmet/unknown conditions or unavailable observations unless continue_on_error is explicit. Action counts and observation/condition counts are separate; executed never means business success. Images omitted.",
                {"calls": {"type": "array", "minItems": 1, "maxItems": 100, "items": {"type": "object", "properties": {
                    **DEVICE_FIELDS, "tool": {"type": "string"}, "arguments": {"type": "object"}, "lease_id": {"type": "string"}}, "required": ["device_id", "tool"], "additionalProperties": False}},
                 "summary_only": {"type": "boolean", "default": False}, "continue_on_error": {"type": "boolean", "default": False}}, ("calls",))
@@ -533,7 +595,7 @@ def bridge(connection):
                     result = tool_result(connection.list_devices(**arguments))
                 elif name == "phoneuse_batch":
                     value = connection.batch(**arguments)
-                    result = tool_result(value, bool(value["summary"]["failed"] or value["summary"]["unknown"]))
+                    result = tool_result(value, bool(value["summary"]["failed"] or value["summary"]["unknown"] or value["summary"]["observation_incomplete"]))
                 else:
                     device_id = arguments.pop("device_id", None)
                     if name == "phoneuse_call":
@@ -599,16 +661,21 @@ def without_image_data(value):
 
 
 def save_screenshot(value, destination):
-    screenshot = value.get("screenshot") or (value.get("observation") or {}).get("screenshot")
-    if not isinstance(screenshot, dict) or not screenshot.get("data_base64"):
+    candidates = [(path, item) for path, item in result_objects(value)
+                  if isinstance(item.get("screenshot"), dict) and item["screenshot"].get("data_base64")
+                  and item["screenshot"].get("available") is not False]
+    if not candidates:
         value["screenshot_output_error"] = "The result contains no screenshot data"
         return
+    source, observation = max(candidates, key=lambda item: item[1].get("captured_at_ms") or 0)
+    screenshot = observation["screenshot"]
     path = Path(destination).expanduser().resolve()
     try:
         data = base64.b64decode(screenshot["data_base64"], validate=True)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
         screenshot["saved_path"] = str(path)
+        value["screenshot_output_source"] = ".".join((*source, "screenshot"))
     except (OSError, ValueError) as error:
         # Saving an image must not hide an already-executed action's result.
         value["screenshot_output_error"] = str(error)

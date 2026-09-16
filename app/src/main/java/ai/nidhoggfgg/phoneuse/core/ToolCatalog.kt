@@ -18,6 +18,26 @@ object ToolCatalog {
         if (args.has("element_id") && !args.has("observation_id")) fail("INVALID_ARGUMENT", "element_id requires observation_id")
         if (name in setOf("tap", "long_press", "swipe", "scroll") && !args.has("observation_id"))
             fail("INVALID_ARGUMENT", "Coordinate and node actions require observation_id")
+        if (name == "observe") validateObservation(args)
+        args.optJSONObject("observation_options")?.let {
+            if (!args.optBoolean("observe_after") && !args.optBoolean("observe_on_rejection"))
+                fail("INVALID_ARGUMENT", "observation_options requires observe_after or observe_on_rejection")
+            validateObservation(it)
+        }
+    }
+    private fun validateObservation(args: JSONObject) {
+        args.optJSONObject("wait_until")?.let { condition ->
+            if (!condition.has("package_name") && !condition.has("element"))
+                fail("INVALID_ARGUMENT", "wait_until must contain package_name or element")
+            condition.optJSONObject("element")?.let { selector ->
+                if (listOf("view_id", "text", "description").none(selector::has))
+                    fail("INVALID_ARGUMENT", "wait_until.element requires view_id, text, or description")
+            }
+        }
+        args.optJSONObject("region")?.let {
+            if (it.getInt("left") >= it.getInt("right") || it.getInt("top") >= it.getInt("bottom"))
+                fail("INVALID_ARGUMENT", "Observation region must have positive width and height")
+        }
     }
     private fun validateObject(value: JSONObject, schema: JSONObject, path: String) {
         val required = schema.optJSONArray("required") ?: JSONArray()
@@ -36,6 +56,15 @@ object ToolCatalog {
                 else -> false
             }
             if (!valid) fail("INVALID_ARGUMENT", "Invalid type for $path.$key")
+            field.optJSONArray("enum")?.let { allowed ->
+                if ((0 until allowed.length()).none { allowed.get(it) == item })
+                    fail("INVALID_ARGUMENT", "Unsupported value for $path.$key")
+            }
+            if (item is Number && ((field.has("minimum") && item.toDouble() < field.getDouble("minimum")) ||
+                        (field.has("maximum") && item.toDouble() > field.getDouble("maximum"))))
+                fail("INVALID_ARGUMENT", "Out of range value for $path.$key")
+            if (item is String && (item.length < field.optInt("minLength", 0) || item.length > field.optInt("maxLength", Int.MAX_VALUE)))
+                fail("INVALID_ARGUMENT", "Invalid length for $path.$key")
             if (item is JSONObject) validateObject(item, field, "$path.$key")
             if (item is JSONArray) {
                 if (item.length() < field.optInt("minItems", 0) || item.length() > field.optInt("maxItems", 64)) fail("INVALID_ARGUMENT", "Invalid array length")
@@ -46,11 +75,42 @@ object ToolCatalog {
     private fun string(description: String) = json("type" to "string", "description" to description)
     private fun number(description: String) = json("type" to "number", "description" to description)
     private fun integer(description: String) = json("type" to "integer", "description" to description)
+    private fun choice(description: String, vararg values: String) = string(description).put("enum", JSONArray(values.toList()))
+    private fun bounded(description: String, min: Int, max: Int) = integer(description).put("minimum", min).put("maximum", max)
+    private fun nonempty(description: String) = string(description).put("minLength", 1).put("maxLength", 256)
+    private fun objectSchema(fields: Map<String, JSONObject>, required: List<String> = emptyList()) = json(
+        "type" to "object", "properties" to JSONObject(fields), "required" to JSONArray(required), "additionalProperties" to false)
+    private fun observationFields(): Map<String, JSONObject> = mapOf(
+        "mode" to choice("tree, screenshot, or both (default)", "tree", "screenshot", "both"),
+        "max_dimension" to bounded("Screenshot longest side, default 1280", 320, 2048),
+        "compact" to json("type" to "boolean", "description" to "Compact visible tree by default; false requests the full bounded tree"),
+        "stable_wait_ms" to bounded("Per-attempt quiet wait; default 600; not a readiness condition", 0, 2000),
+        "max_attempts" to bounded("Consistency attempts in each collection, default 3", 1, 3),
+        "timeout_ms" to bounded("Total collection and condition budget; default 10000 with wait_until, otherwise 20000", 1, 60000),
+        "wait_until" to objectSchema(mapOf(
+            "package_name" to nonempty("Required active application; all supplied conditions must match"),
+            "element" to objectSchema(mapOf(
+                "view_id" to nonempty("Exact Android resource ID"), "text" to string("Exact node text"),
+                "description" to string("Exact content description"),
+                "visible" to json("type" to "boolean"), "enabled" to json("type" to "boolean"),
+                "editable" to json("type" to "boolean"),
+                "action" to choice("Required supported node action", "tap", "long_press", "set_text", "scroll_forward", "scroll_backward"),
+                "match" to choice("unique (default) rejects ambiguous matches; exists only waits for any match", "unique", "exists"))))),
+        "output" to choice("legacy (default) or decision field and structure projection", "legacy", "decision"),
+        "diagnostics" to json("type" to "boolean", "description" to "Include bounded collection timing and consistency diagnostics"),
+        "include_details" to json("type" to "boolean", "description" to "Include detailed node fields in decision output"),
+        "region" to objectSchema(listOf("left", "top", "right", "bottom").associateWith { bounded("Display pixel boundary", Int.MIN_VALUE, Int.MAX_VALUE) },
+            listOf("left", "top", "right", "bottom")),
+        "subtree" to objectSchema(mapOf("observation_id" to nonempty("Original client-owned observation to revalidate"),
+            "element_id" to nonempty("Original node path to revalidate before projecting")), listOf("observation_id", "element_id"))
+    )
     private val common = mapOf(
         "request_id" to string("Unique action ID, retained for 10 minutes per client; reuse exactly on retransmission"),
         "observation_id" to string("Observation used to select the target; required for node and coordinate actions"),
         "expected_window_id" to integer("Reject a different active window"),
         "observe_after" to json("type" to "boolean", "description" to "Attach observation after action; observation failure never replays the action"),
+        "observe_on_rejection" to json("type" to "boolean", "description" to "Attach a fresh observation only after a terminal target-validation rejection confirmed not executed"),
+        "observation_options" to objectSchema(observationFields()),
         "lease_id" to string("Optional developer reservation; required while this device is reserved")
     )
     private val point = json("type" to "object", "properties" to json("x" to number("Display pixel x"), "y" to number("Display pixel y")),
@@ -72,11 +132,7 @@ object ToolCatalog {
         tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("request_id" to string("Omit to cancel all pending actions for this client"))),
         tool("acquire_device", "Optionally reserve this device for a bounded test sequence; local pause and stop always override", mapOf("ttl_ms" to integer("1000..300000, default 60000"), "lease_id" to string("Current reservation ID to renew"))),
         tool("release_device", "Release this client's developer reservation", mapOf("lease_id" to string("Reservation to release")), listOf("lease_id")),
-        tool("observe", "Collect a fresh snapshot with bounded stability waits; screenshots and tree are not atomic", mapOf(
-            "mode" to string("tree, screenshot, or both (default)"), "max_dimension" to integer("Screenshot longest side 320..2048, default 1280"),
-            "compact" to json("type" to "boolean", "description" to "Compact visible tree by default; false requests the full bounded tree"),
-            "stable_wait_ms" to integer("Maximum wait per attempt for a quiet target window, 0..2000, default 600"),
-            "max_attempts" to integer("Maximum observation collection attempts, 1..3, default 3"))),
+        tool("observe", "Collect a fresh snapshot; optional package and exact element conditions must all match. A quiet tree is not semantic readiness; screenshots and tree are not atomic", observationFields()),
         tool("list_apps", "List discoverable launchable applications"),
         tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),
         tool("tap", "Tap a snapshot element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), listOf("observation_id"), true),

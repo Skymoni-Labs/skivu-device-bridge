@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="status" type="id" />
+    <item name="target" type="id" />
+    <item name="list" type="id" />
+    <item name="search" type="id" />
+    <item name="focus_control" type="id" />
+    <item name="overlay" type="id" />
+</resources>

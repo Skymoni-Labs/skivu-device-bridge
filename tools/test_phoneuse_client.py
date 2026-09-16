@@ -453,6 +453,130 @@ class ClientTest(unittest.TestCase):
         self.assertTrue(value["screenshot"]["image_data_omitted"])
         self.assertEqual(str(screenshot_path.resolve()), value["screenshot"]["saved_path"])
 
+    def test_conditional_observation_blocks_dependencies_without_replaying_executed_action(self):
+        self.save_devices()
+        calls = [{"device_id": "phone-a", "tool": "launch_app", "arguments": {"request_id": "launch", "observe_after": True}},
+                 {"device_id": "phone-a", "tool": "home", "arguments": {"request_id": "next"}}]
+        for condition in ("unsatisfied", "ambiguous", "unknown"):
+            observation = {"observation_status": "condition_timeout", "condition": {"status": condition, "timed_out": True}}
+            response = {"state": "executed", "action_executed": True, "observation": observation, **identity()}
+            with self.subTest(condition=condition), patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=response) as post:
+                value = self.connection.batch(calls)
+            self.assertEqual(1, post.call_count)
+            self.assertTrue(value["results"][0]["result"]["action_executed"])
+            self.assertEqual(1, value["summary"]["succeeded"])
+            self.assertEqual(1, value["summary"]["skipped"])
+            self.assertEqual(1, value["summary"]["observation_incomplete"])
+            self.assertEqual({condition: 1}, value["summary"]["condition_statuses"])
+
+    def test_failed_latest_observation_does_not_use_historical_condition_as_readiness(self):
+        self.save_devices()
+        calls = [{"device_id": "phone-a", "tool": "get_status", "arguments": {"request_id": "one"}},
+                 {"device_id": "phone-a", "tool": "home", "arguments": {"request_id": "two"}}]
+        response = {"request": {"state": "executed", "action_executed": True, "observation_status": "failed", "observation": {
+            "observation_status": "failed", "condition": {"status": "unknown", "timed_out": False},
+            "error": {"code": "OBSERVATION_INCONSISTENT"}, "last_observation": {
+                "condition": {"status": "satisfied", "timed_out": False}, "captured_at_ms": 123}}}, **identity()}
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=response) as post:
+            value = self.connection.batch(calls)
+        self.assertEqual(1, post.call_count)
+        self.assertEqual({"unknown": 1}, value["summary"]["condition_statuses"])
+        self.assertEqual({"failed": 1}, value["summary"]["observation_statuses"])
+        self.assertEqual({"OBSERVATION_INCONSISTENT": 1}, value["summary"]["observation_error_codes"])
+        self.assertEqual(1, value["summary"]["observation_incomplete"])
+
+    def test_accepted_false_and_executed_observing_are_still_pending_without_retries(self):
+        self.save_devices()
+        calls = [{"device_id": "phone-a", "tool": "get_status", "arguments": {"request_id": "one"}},
+                 {"device_id": "phone-a", "tool": "home", "arguments": {"request_id": "two"}}]
+        for request in ({"state": "accepted", "action_executed": False},
+                        {"state": "executing", "action_executed": True, "observation_status": "observing"}):
+            with self.subTest(request=request), patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value={"request": request, **identity()}) as post:
+                value = self.connection.batch(calls)
+            self.assertEqual(1, post.call_count)
+            self.assertEqual(1, value["summary"]["pending"])
+            self.assertEqual(1, value["summary"]["skipped"])
+            self.assertEqual(0, value["summary"]["succeeded"])
+
+    def test_rejection_keeps_original_error_and_counts_failed_recovery_observation(self):
+        self.save_devices()
+        response = {"state": "failed", "action_executed": False, "error": {"code": "STALE_ELEMENT"},
+                    "recovery": {"category": "refresh_observation", "advisory": True, "replay_action": False},
+                    "recovery_observation": {"observation_status": "failed", "error": {"code": "PAUSED"}}, **identity()}
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=response) as post:
+            value = self.connection.batch([{"device_id": "phone-a", "tool": "tap", "arguments": {"request_id": "one"}}])
+        self.assertEqual(1, post.call_count)
+        self.assertEqual({"STALE_ELEMENT": 1}, value["summary"]["error_codes"])
+        self.assertEqual({"PAUSED": 1}, value["summary"]["observation_error_codes"])
+        self.assertEqual(response["recovery"], value["results"][0]["result"]["recovery"])
+
+    def test_standalone_conditions_and_requested_unavailable_parts_are_incomplete(self):
+        incomplete = [
+            {"condition": {"status": "unsatisfied", "timed_out": True}},
+            {"condition": {"status": "satisfied", "timed_out": True}},
+            {"observation_status": "complete", "tree": {"available": True}, "screenshot": {"available": False}},
+            {"observation_status": "complete", "tree": {"available": False}, "screenshot": None},
+        ]
+        for value in incomplete:
+            with self.subTest(value=value):
+                self.assertTrue(client.observation_incomplete(value))
+        self.assertFalse(client.observation_incomplete({"condition": {"status": "satisfied", "timed_out": False}, "screenshot": None}))
+        self.assertTrue(client.observation_incomplete({"state": "executed"}, {"observe_after": True}))
+        with patch.object(self.connection, "send", return_value={"observation_status": "failed", "error": {"code": "OBSERVATION_TIMEOUT"}}):
+            value = self.connection.batch([{"device_id": "phone-a", "tool": "observe"}])
+        self.assertEqual({"OBSERVATION_TIMEOUT": 1}, value["summary"]["observation_error_codes"])
+        self.assertEqual(1, value["summary"]["failed"])
+
+    def test_batch_mcp_marks_unmet_condition_as_error_but_continue_is_explicit(self):
+        self.save_devices()
+        response = {"state": "executed", "observation": {"condition": {"status": "unsatisfied", "timed_out": True}}, **identity()}
+        calls = [{"device_id": "phone-a", "tool": "home", "arguments": {"request_id": str(index)}} for index in range(2)]
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=response) as post:
+            value = self.run_bridge([{"id": 1, "method": "tools/call", "params": {
+                "name": "phoneuse_batch", "arguments": {"calls": calls, "continue_on_error": True}}}])[0]
+        self.assertEqual(2, post.call_count)
+        self.assertTrue(value["result"]["isError"])
+        self.assertEqual(2, json.loads(value["result"]["content"][0]["text"])["summary"]["observation_incomplete"])
+
+    def test_screenshot_extracts_nested_recovery_and_historical_observations_without_changing_facts(self):
+        def shot(data):
+            return {"available": True, "data_base64": base64.b64encode(data).decode()}
+        value = {"request": {"state": "failed", "action_executed": False, "error": {"code": "STALE_ELEMENT"},
+                            "recovery_observation": {"observation_status": "failed", "condition": {"status": "unknown"},
+                                "last_observation": {"captured_at_ms": 200, "screenshot": shot(b"latest")}},
+                            "last_observation": {"captured_at_ms": 100, "screenshot": shot(b"older")}}}
+        path = Path(self.directory.name) / "nested.jpg"
+        client.save_screenshot(value, path)
+        self.assertEqual(b"latest", path.read_bytes())
+        self.assertEqual("request.recovery_observation.last_observation.screenshot", value["screenshot_output_source"])
+        self.assertEqual("failed", value["request"]["state"])
+        self.assertEqual("unknown", value["request"]["recovery_observation"]["condition"]["status"])
+        self.assertNotIn("data_base64", json.dumps(client.without_image_data(value)))
+
+    def test_nested_observation_identity_conflicts_are_rejected_for_api_and_mcp(self):
+        self.save_devices()
+        for endpoint in ("/api", "/mcp"):
+            result = {"state": "failed", "recovery_observation": {"last_observation": {**identity("other", "run-a")}}, **identity()}
+            payload = {"tool": "tap", "arguments": {"request_id": "one"}}
+            if endpoint == "/mcp":
+                result = {"jsonrpc": "2.0", "id": 1, "result": client.tool_result(result)}
+                payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "tap", "arguments": {"request_id": "one"}}}
+            with self.subTest(endpoint=endpoint), patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=result):
+                with self.assertRaises(client.BridgeError) as raised:
+                    self.connection.send("phone-a", endpoint, payload)
+            self.assertEqual("DEVICE_IDENTITY_MISMATCH", raised.exception.value["error"]["code"])
+
+    def test_standalone_conditional_read_has_longer_http_timeout_but_actions_do_not(self):
+        connection = MagicMock()
+        connection.getresponse.return_value.status = 200
+        connection.getresponse.return_value.read.return_value = b'{}'
+        for endpoint, payload, timeout in (("/api", {"tool": "observe"}, 90),
+                                           ("/mcp", {"params": {"name": "observe"}}, 90),
+                                           ("/api", {"tool": "home", "arguments": {"observe_after": True}}, 25)):
+            with self.subTest(endpoint=endpoint, payload=payload), patch.object(client.http.client, "HTTPConnection", return_value=connection) as factory:
+                client.post({"url": "phone-a", "token": "secret"}, endpoint, payload)
+            self.assertEqual(timeout, factory.call_args.kwargs["timeout"])
+
     def test_screenshot_save_failure_preserves_executed_action(self):
         value = {"state": "executed", "observation": {"error": {"code": "OBSERVATION_INCONSISTENT"}}}
         client.save_screenshot(value, Path(self.directory.name) / "missing.jpg")

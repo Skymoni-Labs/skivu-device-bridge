@@ -7,9 +7,10 @@ const path = require('node:path');
 const assert = require('node:assert/strict');
 const root = path.join(__dirname, '../app/src/main/assets/web');
 let failNextAction = false;
+let nextResult = null;
 let pairingState = 'pending', revoked = false, calls = [], polls = 0, pairRequests = 0, offline = false;
 const tool = (name, required = [], properties = {}) => ({ name, description: name, inputSchema: { type: 'object', required, properties } });
-const catalog = [tool('get_capabilities'), tool('get_status', [], { request_id: { type: 'string' } }), tool('launch_app', ['request_id', 'package_name'], { request_id: { type: 'string' }, package_name: { type: 'string', description: 'Android package name' } }), tool('home', ['request_id'], {
+const catalog = [tool('get_capabilities'), tool('get_status', [], { request_id: { type: 'string' } }), tool('launch_app', ['request_id', 'package_name'], { request_id: { type: 'string' }, package_name: { type: 'string', description: 'Android package name' }, observe_after: { type: 'boolean' }, observation_options: { type: 'object' } }), tool('home', ['request_id'], {
   request_id: { type: 'string' }
 })];
 const server = http.createServer(async (req, res) => {
@@ -51,6 +52,7 @@ const server = http.createServer(async (req, res) => {
   if (req.url === '/api/tools') return reply({ tools: catalog });
   if (req.url === '/api') {
     calls.push(payload);
+    if (nextResult) { const result = nextResult; nextResult = null; return reply(result); }
     if (payload.tool === 'get_status') return reply({ ...(payload.arguments.request_id ? { request: { state: 'executed' } } : {}) });
     if (failNextAction) { failNextAction = false; return reply({ state: 'failed', error: { code: 'ACTION_REJECTED', message: 'Action rejected' } }); }
     return reply({ state: 'executed', request_id: payload.arguments.request_id, available: true });
@@ -126,6 +128,53 @@ const server = http.createServer(async (req, res) => {
     failNextAction = true; await page.locator('#new-id').click(); await page.locator('#run').click();
     await page.waitForFunction(() => !document.getElementById('run').disabled);
     assert.match(await page.locator('#notice').textContent(), /Action rejected/);
+    assert.match(await page.locator('#result-status').textContent(), /操作失败.*Action rejected/);
+    // The schema-driven form accepts the same observation options as direct API.
+    await page.locator('#param-observe_after').selectOption('true');
+    await page.locator('#param-observation_options').fill(JSON.stringify({ timeout_ms: 60000, wait_until: { package_name: 'ai.example.app' } }));
+    const cases = [
+      [{ state: 'accepted', action_executed: false }, /仍在排队.*原 request_id/],
+      [{ state: 'executing', action_executed: true, observation_status: 'observing' }, /动作已执行，正在等待观察.*原 request_id/],
+      [{ state: 'executing', action_executed: false, observation_status: 'observing', observation_purpose: 'after_rejection' }, /动作未执行，正在读取恢复观察.*原 request_id/],
+      [{ state: 'executed', action_executed: true, observation_status: 'condition_timeout', observation: { condition: { status: 'unsatisfied', timed_out: true } } }, /动作已执行；观察未完成（条件未满足）/],
+      [{ state: 'executed', action_executed: true, observation: { condition: { status: 'ambiguous', timed_out: true } } }, /目标匹配有歧义/],
+      [{ state: 'executed', action_executed: true, observation: { condition: { status: 'unknown' }, last_observation: { condition: { status: 'satisfied' } } } }, /当前条件未知/],
+      [{ state: 'executed', action_executed: true, observation: { observation_status: 'complete', screenshot: { available: false } } }, /截图不可用/],
+      [{ state: 'executed', action_executed: true, observation: { observation_status: 'failed', error: { code: 'OBSERVATION_INCONSISTENT' } } }, /观察采集失败/],
+      [{ state: 'unknown', action_executed: null }, /动作结果未知.*请勿重放/]
+    ];
+    for (const [result, expected] of cases) {
+      const before = calls.length;
+      nextResult = result;
+      await page.locator('#new-id').click(); await page.locator('#run').click();
+      await page.waitForFunction(() => !document.getElementById('run').disabled);
+      assert.match(await page.locator('#result-status').textContent(), expected);
+      assert.equal(calls.length, before + 1); // No automatic replay or substitute action.
+      assert.equal(calls.at(-1).arguments.observation_options.timeout_ms, 60000);
+    }
+    // Status polls can contain a rejected action, failed recovery and a historical image.
+    await page.locator('[data-tool="get_status"]').click();
+    await page.locator('#param-request_id').fill(first.arguments.request_id);
+    const screenshotData = Buffer.from('nested-image').toString('base64');
+    nextResult = { request: { state: 'failed', action_executed: false,
+      error: { code: 'STALE_ELEMENT', message: 'Target changed' },
+      recovery: { category: 'refresh_observation', advisory: true, replay_action: false },
+      recovery_observation: { observation_status: 'failed', condition: { status: 'unknown' },
+        last_observation: { captured_at_ms: 123, screenshot: { available: true, mime_type: 'image/jpeg', data_base64: screenshotData } } } } };
+    await page.locator('#run').click(); await page.waitForFunction(() => !document.getElementById('run').disabled);
+    assert.match(await page.locator('#result-status').textContent(), /操作失败.*恢复观察未完成.*重新观察/);
+    assert.equal(await page.locator('#image-result').isHidden(), false);
+    assert.equal(await page.locator('#screenshot').getAttribute('src'), `data:image/jpeg;base64,${screenshotData}`);
+    const shownResult = JSON.parse(await page.locator('#result').textContent());
+    assert.equal(shownResult.screenshot_display_source, 'request.recovery_observation.last_observation.screenshot');
+    assert.equal(shownResult.request.recovery_observation.condition.status, 'unknown');
+    assert.ok(!(await page.locator('#result').textContent()).includes(screenshotData));
+    const callsBeforeFocus = calls.length;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(() => !document.getElementById('run').disabled);
+    assert.equal(calls.length, callsBeforeFocus);
+    await page.locator('[data-tool="launch_app"]').click();
+    await page.locator('#param-package_name').fill('ai.example.app');
     await page.locator('#new-id').click(); await page.locator('#run').click();
     await page.waitForFunction(() => !document.getElementById('run').disabled);
     const reportDir = path.join(__dirname, '../app/build/reports'); fs.mkdirSync(reportDir, { recursive: true });
@@ -163,6 +212,6 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => document.getElementById('notice').textContent.includes('过期'));
     assert.equal(await page.locator('#pair').isEnabled(), true);
     assert.deepEqual(errors, []);
-    console.log(`PASS: HttpOnly pairing, browser restart, server reconnect, legacy migration, API tools/forms, action IDs, unpair, revocation, denial, expiry, responsive layout and CSP; ${polls} polls; no page errors.`);
+    console.log(`PASS: HttpOnly pairing, browser restart, reconnect, forms, action IDs, conditional progress, nested recovery images, no replay, unpair/revocation/expiry, responsive layout and CSP; ${polls} polls; no page errors.`);
   } finally { if (browser) await browser.close(); server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
