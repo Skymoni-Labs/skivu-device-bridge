@@ -4,7 +4,7 @@ import ai.nidhoggfgg.phoneuse.core.canonical
 import ai.nidhoggfgg.phoneuse.core.json
 import org.json.JSONArray
 
-/** Mutable widget state matters even when the node's label and position have not changed. */
+/** Widget state exported for observation and condition diagnostics. */
 internal data class NodeSemantics(
     val checkable: Boolean = false,
     val checked: Boolean = false,
@@ -78,96 +78,24 @@ internal class SnapshotStore<T>(
     }
 }
 
+/** An editable node may expose its placeholder through getText(); it is not entered text. */
+internal fun enteredText(text: String?, editable: Boolean, showingHint: Boolean): String? =
+    if (editable && showingHint) "" else text
+
+/** Empty text has exactly one insertion position, even if Android omits its selection. */
+internal fun insertionSelection(text: String?, start: Int, end: Int): Pair<Int, Int> =
+    if (text == "" && start == -1 && end == -1) 0 to 0 else start to end
+
 /** Target text always participates; selection only participates when insertion uses it. */
 internal data class NodeReference(val content: String, val selectionStart: Int, val selectionEnd: Int) {
     fun matches(other: NodeReference, insert: Boolean): Boolean = content == other.content &&
         (!insert || (selectionStart == other.selectionStart && selectionEnd == other.selectionEnd))
 }
 
-internal data class ElementReference(val reference: NodeReference, val layout: String, val subtree: String,
-    val container: String?, val complete: Boolean, val identity: String? = null,
-    val nonTextContent: String? = null, val textContent: String? = null, val stableId: String? = null,
-    val contentAnchor: String? = null, val collectionRow: Boolean = false, val logicalItemId: String? = null)
+internal data class ElementReference(val reference: NodeReference, val identity: String, val complete: Boolean = true)
 
-/** Only the delivered journal is evidence. Missing/evicted events cannot approve a changed list. */
-internal data class ScrollEventEvidence(val complete: Boolean, val events: List<ScrollChange>)
-internal data class ScrollChange(val kind: String, val sourceIdentity: String?, val textOnly: Boolean)
-
-/**
- * Semantic scroll can tolerate a leaf label refresh, but not a row rebind inferred from position.
- * Changed labels require provider-assigned stable IDs and exact text events; subtree notifications,
- * user scroll, focus changes, missing sources and a journal gap are all deliberately inconclusive.
- */
-internal fun scrollChangeReason(previous: Map<String, ElementReference>, current: Map<String, ElementReference>,
-                                path: String, evidence: ScrollEventEvidence): String? {
-    val expected = previous[path] ?: return "element_not_in_observation"
-    val actual = current[path] ?: return "element_missing"
-    if (!expected.reference.matches(actual.reference, false)) return "target_changed"
-    var ancestor = path
-    while (ancestor.isNotEmpty()) {
-        val old = previous[ancestor] ?: return "layout_unverifiable"
-        val now = current[ancestor] ?: return "layout_changed"
-        if (old.layout != now.layout) return "layout_changed"
-        if (old.nonTextContent != null && old.nonTextContent != now.nonTextContent) return "interaction_context_changed"
-        ancestor = ancestor.substringBeforeLast('.', "")
-    }
-    if (!expected.complete || !actual.complete) return "container_unverifiable"
-    if (expected.container != actual.container) return "container_changed"
-    if (!evidence.complete) return "scroll_event_history_incomplete"
-    // Even a restored tree cannot hide intervening user scrolling, reordering or modal transitions.
-    if (evidence.events.any { !it.textOnly || it.sourceIdentity == null ||
-            it.kind !in setOf("TYPE_VIEW_TEXT_CHANGED", "TYPE_WINDOW_CONTENT_CHANGED") }) return "scroll_change_unverifiable"
-    val oldNodes = previous.filterKeys { it == path || it.startsWith("$path.") }
-    val newNodes = current.filterKeys { it == path || it.startsWith("$path.") }
-    if (oldNodes.keys != newNodes.keys) return "container_structure_changed"
-    val identities = oldNodes.values.mapNotNull { it.identity }
-    if (identities.toSet().size != oldNodes.size) return "scroll_identity_unverifiable"
-    val oldAnchorCounts = oldNodes.values.mapNotNull { it.contentAnchor }.groupingBy { it }.eachCount()
-    val newAnchorCounts = newNodes.values.mapNotNull { it.contentAnchor }.groupingBy { it }.eachCount()
-    val changed = mutableSetOf<String>()
-    for ((nodePath, old) in oldNodes) {
-        val now = newNodes.getValue(nodePath)
-        if (!old.complete || !now.complete) return "container_unverifiable"
-        if (old.identity == null || old.identity != now.identity || old.layout != now.layout || old.stableId != now.stableId ||
-            old.logicalItemId != now.logicalItemId || old.collectionRow != now.collectionRow)
-            return "container_structure_changed"
-        if (old.nonTextContent == null || old.nonTextContent != now.nonTextContent) return "container_semantics_changed"
-        if (old.reference.content != now.reference.content) {
-            if (old.textContent == null || old.textContent == now.textContent) return "container_semantics_changed"
-            if (old.stableId.isNullOrEmpty()) return "scroll_identity_unverifiable"
-            val rowPath = old.container ?: return "scroll_row_identity_unverifiable"
-            val rowNode = previous[rowPath] ?: return "scroll_row_identity_unverifiable"
-            if (rowPath == path || !rowNode.collectionRow || !rowPath.startsWith("$path.")) return "scroll_row_identity_unverifiable"
-            val logicalId = rowNode.logicalItemId ?: return "scroll_row_identity_unverifiable"
-            // Neither widget IDs nor fixed rank/slot labels prove data-item identity. Only a provider
-            // that explicitly declares our logical-item contract can approve text-refresh scrolling.
-            if (logicalId != newNodes[rowPath]?.logicalItemId ||
-                oldNodes.values.count { it.collectionRow && it.logicalItemId == logicalId } != 1 ||
-                newNodes.values.count { it.collectionRow && it.logicalItemId == logicalId } != 1) return "scroll_row_identity_unverifiable"
-            // Widget unique IDs survive adapter rebinding. Require independent, unchanged row content
-            // that is unique in both scenes; two rows swapping all labels cannot pass this check.
-            val anchored = oldNodes.any { (candidatePath, candidate) ->
-                val anchor = candidate.contentAnchor
-                (candidatePath == rowPath || candidatePath.startsWith("$rowPath.")) && anchor != null &&
-                    anchor == newNodes[candidatePath]?.contentAnchor && oldAnchorCounts[anchor] == 1 && newAnchorCounts[anchor] == 1 &&
-                    candidate.identity == newNodes[candidatePath]?.identity
-            }
-            if (!anchored) return "scroll_row_identity_unverifiable"
-            // A changed collection item's identity must also be supplied by its provider.
-            var row = old.container
-            while (row != null && row != path && row.startsWith("$path.")) {
-                val item = previous[row] ?: return "scroll_identity_unverifiable"
-                if (item.stableId.isNullOrEmpty()) return "scroll_identity_unverifiable"
-                row = row.substringBeforeLast('.', "").takeIf { it.isNotEmpty() }
-            }
-            changed.add(old.identity)
-        }
-    }
-    if (evidence.events.any { it.sourceIdentity !in identities }) return "scroll_change_outside_container"
-    val sources = evidence.events.mapNotNull { it.sourceIdentity }.toSet()
-    if (!sources.containsAll(changed)) return "scroll_text_change_without_event"
-    return null
-}
+/** Unique labels on our notification actions keep those local even when System UI hosts them. */
+internal val LOCAL_CONTROL_LABELS = setOf("Phone Use：暂停", "Phone Use：恢复", "Phone Use：停止服务")
 
 internal data class ScreenRect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     fun intersects(other: ScreenRect): Boolean = left < other.right && right > other.left && top < other.bottom && bottom > other.top
@@ -196,68 +124,13 @@ internal fun pathIntersectsRegion(points: List<Pair<Float, Float>>, regions: Lis
     }
 }
 
-/** PiP is a platform-declared non-modal mode. Other unfocused windows may still be modal. */
-internal fun permitsCornerPipScroll(target: ScreenRect, overlap: List<ScreenRect>, applicationWindow: Boolean,
-    pictureInPicture: Boolean, blockerActive: Boolean, blockerFocused: Boolean,
-    targetActive: Boolean, targetFocused: Boolean): Boolean {
-    if (!applicationWindow || !pictureInPicture || blockerActive || blockerFocused || !targetActive || !targetFocused || overlap.isEmpty()) return false
-    val left = overlap.minOf { it.left }; val top = overlap.minOf { it.top }
-    val right = overlap.maxOf { it.right }; val bottom = overlap.maxOf { it.bottom }
-    val width = target.right - target.left; val height = target.bottom - target.top
-    if (width <= 0 || height <= 0 || right - left > width / 3 || bottom - top > height / 3) return false
-    return (right <= target.left + width / 3 || left >= target.right - width / 3) &&
-        (bottom <= target.top + height / 3 || top >= target.bottom - height / 3)
-}
-
-/** Checks only structural/field evidence: sibling branches may refresh, the containing row may not. */
+/** Validate the selected node, not siblings, ancestors, or its changing descendants. */
 internal fun targetChangeReason(previous: Map<String, ElementReference>, current: Map<String, ElementReference>,
                                 path: String, insert: Boolean): String? {
     val expected = previous[path] ?: return "element_not_in_observation"
     val actual = current[path] ?: return "element_missing"
+    if (expected.identity != actual.identity) return "target_replaced"
     if (!expected.reference.matches(actual.reference, insert)) return if (
         expected.reference.content == actual.reference.content && insert) "text_selection_changed" else "target_changed"
-    var ancestor = path
-    while (ancestor.isNotEmpty()) {
-        val old = previous[ancestor] ?: return "layout_unverifiable"
-        val now = current[ancestor] ?: return "layout_changed"
-        if (old.layout != now.layout) return "layout_changed"
-        ancestor = ancestor.substringBeforeLast('.', "")
-    }
-    if (expected.container != actual.container) return "container_changed"
-    expected.container?.let { container ->
-        val old = previous[container] ?: return "container_unverifiable"
-        val now = current[container] ?: return "container_changed"
-        if (!old.complete || !now.complete) return "container_unverifiable"
-        if (old.subtree != now.subtree) return "container_changed"
-    }
     return null
-}
-
-/** Retry only a read callback. The caller performs an action once, before invoking this sampler. */
-internal class StableSampler(
-    private val clock: () -> Long,
-    private val sleep: (Long) -> Unit,
-    private val quietMs: Long = 120
-) {
-    data class Result<T>(val value: T, val attempts: Int)
-
-    fun <T : Any> sample(waitMs: Int, maxAttempts: Int, check: () -> Unit,
-                         stamp: () -> Long, capture: () -> T?): Result<T>? {
-        repeat(maxAttempts) { attempt ->
-            val deadline = clock() + waitMs
-            var version = stamp()
-            var quietSince = clock()
-            while (clock() < deadline && clock() - quietSince < quietMs) {
-                check()
-                sleep(minOf(25L, deadline - clock()).coerceAtLeast(1))
-                val next = stamp()
-                if (next != version) { version = next; quietSince = clock() }
-            }
-            check()
-            val value = capture()
-            check()
-            if (value != null) return Result(value, attempt + 1)
-        }
-        return null
-    }
 }

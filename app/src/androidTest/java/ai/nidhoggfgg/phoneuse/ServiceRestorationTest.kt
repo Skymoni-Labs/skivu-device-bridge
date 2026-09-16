@@ -35,6 +35,9 @@ class ServiceRestorationTest {
             }
         }
         try {
+            // Other device tests may have opened the dashboard and restored the service.
+            context.stopService(Intent(context, PhoneUseService::class.java))
+            awaitState { PhoneUseService.current == null }
             assertTrue(settings.edit().putBoolean("enabled", true).putBoolean("paused", true).commit())
             ActivityScenario.launch(MainActivity::class.java).use {
                 awaitState { PhoneUseService.current != null }

@@ -83,8 +83,8 @@ object ToolCatalog {
     private fun observationFields(): Map<String, JSONObject> = mapOf(
         "mode" to choice("tree, screenshot, or both (default)", "tree", "screenshot", "both"),
         "max_dimension" to bounded("Screenshot longest side, default 1280", 320, 2048),
-        "compact" to json("type" to "boolean", "description" to "Compact visible tree by default; false requests the full bounded tree"),
-        "stable_wait_ms" to bounded("Per-attempt quiet wait; default 600; not a readiness condition", 0, 2000),
+        "compact" to json("type" to "boolean", "description" to "Compact visible tree by default; full bounded tree requires output=legacy and compact=false"),
+        "stable_wait_ms" to bounded("Optional per-attempt quiet wait; default 0 (immediate capture); not a readiness condition", 0, 2000).put("default", 0),
         "max_attempts" to bounded("Consistency attempts in each collection, default 3", 1, 3),
         "timeout_ms" to bounded("Total collection and condition budget; default 10000 with wait_until, otherwise 20000", 1, 60000),
         "wait_until" to objectSchema(mapOf(
@@ -96,7 +96,7 @@ object ToolCatalog {
                 "editable" to json("type" to "boolean"),
                 "action" to choice("Required supported node action", "tap", "long_press", "set_text", "scroll_forward", "scroll_backward"),
                 "match" to choice("unique (default) rejects ambiguous matches; exists only waits for any match", "unique", "exists"))))),
-        "output" to choice("legacy (default) or decision field and structure projection", "legacy", "decision"),
+        "output" to choice("decision (default) projects useful nodes; legacy exposes full fields", "decision", "legacy").put("default", "decision"),
         "diagnostics" to json("type" to "boolean", "description" to "Include bounded collection timing and consistency diagnostics"),
         "include_details" to json("type" to "boolean", "description" to "Include detailed node fields in decision output"),
         "region" to objectSchema(listOf("left", "top", "right", "bottom").associateWith { bounded("Display pixel boundary", Int.MIN_VALUE, Int.MAX_VALUE) },
@@ -108,7 +108,7 @@ object ToolCatalog {
         "request_id" to string("Unique action ID, retained for 10 minutes per client; reuse exactly on retransmission"),
         "observation_id" to string("Observation used to select the target; required for node and coordinate actions"),
         "expected_window_id" to integer("Reject a different active window"),
-        "observe_after" to json("type" to "boolean", "description" to "Attach observation after action; observation failure never replays the action"),
+        "observe_after" to json("type" to "boolean", "description" to "Default false. Explicitly attach observation after execution; no page wait unless observation_options requests it; failure never replays the action", "default" to false),
         "observe_on_rejection" to json("type" to "boolean", "description" to "Attach a fresh observation only after a terminal target-validation rejection confirmed not executed"),
         "observation_options" to objectSchema(observationFields()),
         "lease_id" to string("Optional developer reservation; required while this device is reserved")
@@ -122,7 +122,7 @@ object ToolCatalog {
         )
         if (action) common.forEach { (key, value) -> properties.put(key, value) }
         fields.forEach { (key, value) -> properties.put(key, value) }
-        return json("name" to name, "description" to description, "inputSchema" to json("type" to "object",
+        return json("name" to name, "description" to if (action) "$description. Executes once and returns execution only by default; AI chooses subsequent waits and observations. Android acceptance is not business success." else description, "inputSchema" to json("type" to "object",
             "properties" to properties, "required" to JSONArray((if (action) listOf("request_id") else emptyList()) + required),
             "additionalProperties" to false))
     }
@@ -132,15 +132,15 @@ object ToolCatalog {
         tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("request_id" to string("Omit to cancel all pending actions for this client"))),
         tool("acquire_device", "Optionally reserve this device for a bounded test sequence; local pause and stop always override", mapOf("ttl_ms" to integer("1000..300000, default 60000"), "lease_id" to string("Current reservation ID to renew"))),
         tool("release_device", "Release this client's developer reservation", mapOf("lease_id" to string("Reservation to release")), listOf("lease_id")),
-        tool("observe", "Collect a fresh snapshot; optional package and exact element conditions must all match. A quiet tree is not semantic readiness; screenshots and tree are not atomic", observationFields()),
+        tool("observe", "Capture current state immediately; nodes default to decision output. Optional explicit bounded waits may match package and exact elements. Channels report availability separately; tree and screenshot are not atomic", observationFields()),
         tool("list_apps", "List discoverable launchable applications"),
         tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),
-        tool("tap", "Tap a snapshot element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), listOf("observation_id"), true),
+        tool("tap", "Tap a snapshot element OR full-display coordinates, including keyboard and system UI", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), listOf("observation_id"), true),
         tool("long_press", "Long press an element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y"), "duration_ms" to integer("500..5000 for coordinate gesture")), listOf("observation_id"), true),
         tool("swipe", "Swipe along 2..64 physical display points", mapOf("points" to json("type" to "array", "items" to point, "minItems" to 2, "maxItems" to 64), "duration_ms" to integer("1..5000, default 600")), listOf("observation_id", "points"), true),
         tool("scroll", "Scroll a node forward/backward or a rectangular screen region up/down/left/right", mapOf("element_id" to string("Snapshot container"), "direction" to string("forward, backward, up, down, left, right"),
             "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("observation_id", "direction"), true),
-        tool("input_text", "Replace all text or insert at the reported selection. Insert requires readable text and replaces any selected range", mapOf("element_id" to string("Editable element"), "text" to string("Text, may be empty; max 10000 characters"), "mode" to string("replace or insert")), listOf("observation_id", "element_id", "text", "mode"), true),
+        tool("input_text", "Replace all text or insert at the reported selection. Revalidates the specified editor without implicit focus or readback; returns text_verified=false, so explicitly observe to check the written text. Insert requires readable text and replaces any selected range", mapOf("element_id" to string("Editable element"), "text" to string("Text, may be empty; max 10000 characters"), "mode" to string("replace or insert")), listOf("observation_id", "element_id", "text", "mode"), true),
         tool("back", "Android Back", action = true), tool("home", "Android Home", action = true), tool("recents", "Android Recents", action = true),
         tool("launch_app", "Launch a discoverable package with an Android Intent", mapOf("package_name" to string("Android package")), listOf("package_name"), true)
     ))

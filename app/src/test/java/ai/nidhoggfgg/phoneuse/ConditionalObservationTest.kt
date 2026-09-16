@@ -39,6 +39,28 @@ class ConditionalObservationTest {
         assertEquals("unsatisfied", evaluateCondition(json("element" to json("text" to label.take(1024))), "app", nodes, true, false).getString("status"))
         assertFalse(projectTree(nodes, true, true, false).getJSONArray("elements").getJSONObject(0).has("_text_hash"))
     }
+    @Test fun defaultCaptureDoesNotWaitForContentEventsOrQuietness() {
+        var now = 0L
+        var captures = 0
+        val result = ConditionalObserver({ now }, { error("Default observation must not sleep") })
+            .run(json(), {}, { error("Default observation must not sample quietness") }) { _, _ ->
+                captures++; now += 7
+                json("observation_id" to "current")
+            }
+        assertEquals(1, captures)
+        assertEquals(0L, result.getLong("wait_ms"))
+        assertEquals(7L, result.getLong("collection_ms"))
+    }
+
+    @Test fun inconsistentPagesHaveBoundedImmediateReadRetries() {
+        var captures = 0
+        val result = ConditionalObserver({ 0L }, { error("No implicit wait") }).run(json(), {}, { 0 }) { _, _ ->
+            captures++; fail("OBSERVATION_INCONSISTENT", "window changed")
+        }
+        assertEquals(3, captures)
+        assertEquals("failed", result.getString("observation_status"))
+    }
+
     @Test fun skeletonKeepsWaitingUntilTheRequestedTargetAppears() {
         var now = 0L
         var captures = 0
@@ -78,7 +100,7 @@ class ConditionalObservationTest {
             now += 20; check(); JSONObject()
         }
         assertEquals("OBSERVATION_TIMEOUT", result.getJSONObject("error").getString("code"))
-        val cancelled = ConditionalObserver({ now }, { now += it }).run(json("timeout_ms" to 1000), { if (now >= 70) fail("CANCELLED", "cancel") }, { 1 }) { _, _ -> fail("TEST", "must not capture") }
+        val cancelled = ConditionalObserver({ now }, { now += it }).run(json("timeout_ms" to 1000, "stable_wait_ms" to 600), { if (now >= 70) fail("CANCELLED", "cancel") }, { 1 }) { _, _ -> fail("TEST", "must not capture") }
         assertEquals("CANCELLED", cancelled.getJSONObject("error").getString("code"))
         assertEquals(70L, now)
     }

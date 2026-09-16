@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Rational
 import android.view.Gravity
 import android.view.View
@@ -33,6 +34,7 @@ class ScenarioActivity : Activity() {
         super.onCreate(savedInstanceState)
         val scenario = intent.getStringExtra("scenario") ?: "static"
         Counters.reset(scenario)
+        if (scenario == "secure") window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
         window.decorView.keepScreenOn = true
         frame = FrameLayout(this)
         body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(30), dp(12), dp(12)) }
@@ -40,6 +42,24 @@ class ScenarioActivity : Activity() {
         setContentView(frame)
         body.addView(label("Scenario: $scenario").apply { id = R.id.status }, LinearLayout.LayoutParams(-1, dp(48)))
         when (scenario) {
+            "target_replace", "carousel" -> {
+                val button = target()
+                body.addView(button)
+                if (scenario == "target_replace") later {
+                    val index = body.indexOfChild(button)
+                    body.removeView(button); body.addView(target(), index)
+                    Counters.increment("mutations", "target_replace")
+                } else {
+                    val decoration = label("Recommendation 0")
+                    frame.addView(decoration, FrameLayout.LayoutParams(-1, -1))
+                    fun refresh() {
+                        decoration.text = "Recommendation ${SystemClock.elapsedRealtime()}"
+                        Counters.increment("mutations", "carousel")
+                        handler.postDelayed({ refresh() }, 75)
+                    }
+                    refresh()
+                }
+            }
             "delayed", "skeleton", "duplicate" -> {
                 val skeleton = label("Loading...")
                 body.addView(skeleton, LinearLayout.LayoutParams(-1, dp(64)))
@@ -50,7 +70,7 @@ class ScenarioActivity : Activity() {
                     Counters.increment("mutations", "ready")
                 }
             }
-            "focus", "keyboard" -> {
+            "focus", "keyboard", "selection" -> {
                 if (scenario == "focus") body.addView(Button(this).apply {
                     id = R.id.focus_control; text = "Focus to edit"
                     setOnClickListener { Counters.increment("clicks", "focus_control"); body.removeView(this); addEditor() }
@@ -179,8 +199,26 @@ class ScenarioActivity : Activity() {
             imeOptions = EditorInfo.IME_FLAG_NO_EXTRACT_UI or EditorInfo.IME_FLAG_NO_FULLSCREEN
         }
         body.addView(editor, LinearLayout.LayoutParams(-1, dp(64)))
+        editor.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) { Counters.value("text", s?.toString().orEmpty()) }
+            override fun afterTextChanged(s: android.text.Editable?) {}
+        })
+        Counters.value("text", "")
+        if (intent.getStringExtra("scenario") == "selection") {
+            editor.setText("原始文本")
+            editor.setSelection(editor.length())
+            later { editor.setSelection(0); Counters.increment("mutations", "selection") }
+        }
         editor.requestFocus()
         editor.post { getSystemService(InputMethodManager::class.java).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT) }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) findViewById<EditText>(R.id.search)?.let { editor ->
+            editor.post { getSystemService(InputMethodManager::class.java).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT) }
+        }
     }
 
     override fun onDestroy() {

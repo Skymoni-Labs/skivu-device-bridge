@@ -9,8 +9,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
-import android.graphics.Region
-import android.graphics.RegionIterator
 import androidx.core.graphics.scale
 import android.os.Bundle
 import android.os.PowerManager
@@ -19,7 +17,6 @@ import android.util.Base64
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.accessibility.AccessibilityWindowInfo
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -30,11 +27,11 @@ import java.util.concurrent.TimeoutException
 
 @Suppress("DEPRECATION")
 class AndroidBackend(private val context: Context, private val serviceInstanceId: String = UUID.randomUUID().toString()) : DeviceBackend {
-    private data class Tree(val elements: JSONArray, val nodes: Map<String, ElementReference>, val exported: Set<String>, val truncated: Boolean)
-    private data class Snapshot(val id: String, val version: Long, val relevantVersion: Long,
+    private data class Tree(val elements: JSONArray, val nodes: Map<String, ElementReference>, val truncated: Boolean)
+    private data class Snapshot(val id: String, val version: Long,
         val accessibilityInstance: String, val window: Int, val app: String,
         val width: Int, val height: Int, val rotation: Int, val created: Long,
-        val windows: String, val nodes: Map<String, ElementReference>, val exported: Set<String>)
+        val nodes: Map<String, ElementReference>, val exported: Set<String>)
     private val snapshots = SnapshotStore<Snapshot>({ SystemClock.elapsedRealtime() })
     private fun service() = PhoneAccessibilityService.current ?: fail("ACCESSIBILITY_UNAVAILABLE", "Enable Phone Use accessibility service")
     private fun ready(): PhoneAccessibilityService {
@@ -60,9 +57,10 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         "coordinate_space" to "default display physical pixels, origin top-left, system bars and IME included",
         "max_nodes" to 1500, "snapshot_ttl_ms" to 30_000, "compact_tree_default" to true,
         "snapshot_limit_per_client" to 8, "snapshot_budget_bytes" to 4 * 1024 * 1024,
-        "observation_max_attempts" to 3, "observation_quiet_ms" to 120,
+        "observation_max_attempts" to 3, "observation_quiet_ms" to 120, "observation_stable_wait_default_ms" to 0,
         "observation_timeout_max_ms" to 60_000, "condition_matching" to "exact fields; AND; unique by default, explicit exists supported",
-        "tree_output_modes" to JSONArray(listOf("legacy", "decision")),
+        "tree_output_modes" to JSONArray(listOf("decision", "legacy")), "tree_output_default" to "decision",
+        "observe_after_default" to false,
         "observation_scope" to "output projection only; subtree references revalidated",
         "coordinate_observation_required" to true, "service_instance_id" to serviceInstanceId,
         "deduplication_ttl_ms" to 600_000, "deduplication_scope" to "client + request_id, current server process",
@@ -74,7 +72,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         val mode = args.optString("mode", "both")
         if (mode !in setOf("tree", "screenshot", "both")) fail("INVALID_ARGUMENT", "mode must be tree, screenshot or both")
         val compact = args.optBoolean("compact", true)
-        val decision = args.optString("output", "legacy") == "decision"
+        val decision = args.optString("output", "decision") == "decision"
         val maxDimension = args.integer("max_dimension", 1280, 320, 2048)
         val service = ready()
         val started = System.currentTimeMillis()
@@ -95,36 +93,56 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 val source = scope?.let { validateContext(service, it, client) }
                 val root = service.rootInActiveWindow
                 val window = root?.windowId ?: -1
-                val relevant = service.relevantVersion(window)
                 val app = root?.packageName?.toString() ?: ""
                 captureDiagnostic.put("before_window_id", window).put("before_package_name", app).put("before_ui_version", before)
-                val readableTree = root != null && app != context.packageName
-                val windowState: String
-                val tree: Tree
+                var readableTree = root != null && app != context.packageName
+                var treeReason: String? = if (app == context.packageName) "LOCAL_CONTROL_UI" else if (root == null) "NO_ACTIVE_WINDOW" else null
+                val treeStarted = System.currentTimeMillis()
+                var tree = Tree(JSONArray(), emptyMap(), false)
                 try {
-                    windowState = windowSignature(service, window, observing = true)
-                    tree = if (root != null && readableTree && (mode != "screenshot" || args.has("wait_until") || scope != null))
-                        collect(root, width, height, false, captureCheck) else Tree(JSONArray(), emptyMap(), emptySet(), false)
+                    // A screenshot-only condition may explicitly require nodes for matching.
+                    if (root != null && readableTree && (mode != "screenshot" || args.optJSONObject("wait_until")?.has("element") == true || scope != null)) {
+                        val rootWindow = root.window
+                        try {
+                            if (rootWindow != null && rootWindow.displayId != Display.DEFAULT_DISPLAY)
+                                fail("DISPLAY_UNSUPPORTED", "Only nodes on the default display are supported")
+                        } finally { rootWindow?.recycle() }
+                        val treeDeadline = SystemClock.elapsedRealtime() + minOf(5000L, if (mode == "both") budget.remaining() / 2 else budget.remaining())
+                        tree = collect(root, width, height) {
+                            captureCheck()
+                            if (SystemClock.elapsedRealtime() >= treeDeadline) fail("TREE_TIMEOUT", "Tree collection budget exhausted")
+                        }
+                    }
+                } catch (error: Exception) {
+                    if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                    readableTree = false
+                    treeReason = (error as? DeviceError)?.code ?: "TREE_UNAVAILABLE"
                 } finally { root?.recycle() }
+                val treeFinished = System.currentTimeMillis()
                 captureCheck()
                 if (scope != null) {
                     val path = scope.getString("element_id")
                     if (source == null || path !in source.exported) stale(service, source, "element_not_in_observation", "STALE_ELEMENT")
-                    targetChangeReason(source.nodes, tree.nodes, path, false)?.let { stale(service, source, it, "STALE_ELEMENT") }
+                    if (readableTree) targetChangeReason(source.nodes, tree.nodes, path, false)?.let { stale(service, source, it, "STALE_ELEMENT") }
                 }
-                val screenshot = if (mode != "tree") screenshot(service, maxDimension, budget, captureCheck) else null
+                val screenshotStarted = System.currentTimeMillis()
+                val screenshot = if (mode != "tree") {
+                    try { screenshot(service, maxDimension, budget, captureCheck) }
+                    catch (error: Exception) {
+                        if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                        json("available" to false, "reason" to ((error as? DeviceError)?.code ?: "SCREENSHOT_UNAVAILABLE"))
+                    }.put("started_at_ms", screenshotStarted).put("finished_at_ms", System.currentTimeMillis())
+                } else null
                 captureCheck()
                 val afterRoot = service.rootInActiveWindow
                 val stableWindow = afterRoot?.windowId ?: -1
                 val stableApp = afterRoot?.packageName?.toString() ?: ""
                 afterRoot?.recycle()
+                // Ordinary content events and IME/overlay changes do not prove cross-page mixing.
                 val reason = when {
-                    relevant > before -> "content_changed"
                     ready().instanceId != service.instanceId -> "service_instance_changed"
                     window != stableWindow || app != stableApp -> "window_changed"
                     geometry() != Triple(width, height, rotation) -> "display_changed"
-                    windowSignature(service, stableWindow, observing = true) != windowState -> "window_occlusion_changed"
-                    relevant != service.relevantVersion(window) -> "content_changed"
                     else -> ""
                 }
                 captureDiagnostic.put("finished_at_ms", System.currentTimeMillis()).put("after_window_id", stableWindow)
@@ -139,8 +157,8 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 val exported = if (mode == "screenshot") emptySet() else (0 until outputElements.length()).map {
                     outputElements.getJSONObject(it).getString("element_id") }.toSet()
                 val id = "$serviceInstanceId:${UUID.randomUUID()}"
-                val snapshot = Snapshot(id, before, relevant, service.instanceId, window, app, width, height,
-                    rotation, SystemClock.elapsedRealtime(), windowState, tree.nodes, exported)
+                val snapshot = Snapshot(id, before, service.instanceId, window, app, width, height,
+                    rotation, SystemClock.elapsedRealtime(), tree.nodes, exported)
                 candidates[id] = snapshot
                 while (candidates.size > 2) candidates.remove(candidates.keys.first())
                 json("observation_id" to id, "service_instance_id" to serviceInstanceId,
@@ -149,10 +167,11 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                     "display" to json("id" to 0, "width" to width, "height" to height, "rotation" to rotation * 90,
                         "coordinates" to "physical_pixels", "origin" to "top_left", "includes_system_bars_and_ime" to true),
                     "tree" to if (mode == "screenshot") null else projected.put("available", readableTree).put("compact", compact)
-                        .put("reason", if (app == context.packageName) "LOCAL_CONTROL_UI" else if (window == -1) "NO_ACTIVE_WINDOW" else JSONObject.NULL)
+                        .put("reason", treeReason ?: JSONObject.NULL).put("started_at_ms", treeStarted).put("finished_at_ms", treeFinished)
                         .put("truncated", tree.truncated).put("collection_truncated", tree.truncated)
                         .put("collection_complete", tree.nodes["0"]?.complete == true),
                     "screenshot" to screenshot).apply {
+                    if (args.optBoolean("diagnostics")) put("windows", windowDiagnostics(service))
                     args.optJSONObject("wait_until")?.let { put("condition", evaluateCondition(it, app, tree.elements, readableTree,
                         tree.truncated, tree.nodes["0"]?.complete == true)) }
                 }
@@ -170,9 +189,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         retained?.optString("observation_id")?.let { id -> candidates[id]?.let { snapshot ->
             // Include map overhead, all fingerprints and provider IDs in the retained budget.
             val bytes = 1024L + snapshot.nodes.entries.sumOf { (path, node) ->
-                768L + 2L * (path.length + node.reference.content.length + node.layout.length + node.subtree.length +
-                    (node.container?.length ?: 0) + (node.identity?.length ?: 0) + (node.nonTextContent?.length ?: 0) +
-                    (node.textContent?.length ?: 0) + (node.stableId?.length ?: 0) + (node.contentAnchor?.length ?: 0) + (node.logicalItemId?.length ?: 0))
+                256L + 2L * (path.length + node.reference.content.length + node.identity.length)
             } + snapshot.exported.sumOf { 64L + it.length * 2L }
             if (!snapshots.put(client, id, bytes, snapshot, snapshot.version, createdAt = snapshot.created)) {
                 val previous = result
@@ -192,13 +209,10 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             result.put("diagnostics", json("started_at_ms" to started,
             "finished_at_ms" to System.currentTimeMillis(), "captures" to captures,
             "capture_diagnostics_truncated" to (result.optInt("collection_attempts") > captures.length()),
-                "consistency_scope" to "accessibility events, active window, package, display and window regions; not atomic tree/screenshot frames"))
+                "consistency_scope" to "active window, package and display; content events are diagnostic, not atomic tree/screenshot frames"))
         }
         return result
     }
-
-    private fun hash(value: Any?): String = java.security.MessageDigest.getInstance("SHA-256")
-        .digest(value.toString().toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
 
     private fun identity(node: AccessibilityNodeInfo): List<Any?> = listOf(node.windowId, node.hashCode(),
         if (android.os.Build.VERSION.SDK_INT >= 33) node.uniqueId else null, node.viewIdResourceName, node.className?.toString())
@@ -212,213 +226,101 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         collection = node.collectionInfo?.let { listOf(it.rowCount, it.columnCount, it.isHierarchical, it.selectionMode) },
         hint = node.hintText?.toString(), error = node.error?.toString(), contentInvalid = node.isContentInvalid)
 
+    private fun nodeText(node: AccessibilityNodeInfo): String? =
+        enteredText(node.text?.toString(), node.isEditable, node.isShowingHintText)
+    private fun nodeSelection(node: AccessibilityNodeInfo): Pair<Int, Int> =
+        insertionSelection(nodeText(node), node.textSelectionStart, node.textSelectionEnd)
+
     private fun fingerprint(node: AccessibilityNodeInfo): NodeReference {
         val bounds = Rect(); node.getBoundsInScreen(bounds)
-        val value = identity(node) + listOf(node.text?.toString(), node.contentDescription?.toString(),
+        val value = identity(node) + listOf(nodeText(node), node.contentDescription?.toString(),
             bounds.flattenToString(), node.isEnabled, node.isVisibleToUser, node.isEditable, node.isPassword,
-            node.actionList.map { it.id }.sorted(), logicalItemId(node))
-        return NodeReference(nodeContentHash(value, semantics(node)), node.textSelectionStart, node.textSelectionEnd)
+            logicalItemId(node))
+        // Focus/selection affordances and descendant scroll state are not target identity.
+        // The requested action is checked directly immediately before dispatch.
+        val (start, end) = nodeSelection(node)
+        return NodeReference(nodeContentHash(value, NodeSemantics()), start, end)
     }
 
-    private data class WindowEvidence(val id: Int, val type: Int, val layer: Int, val bounds: Rect,
-        val region: List<ScreenRect>, val active: Boolean, val focused: Boolean, val pictureInPicture: Boolean)
-
-    private fun regionRects(region: Region): List<ScreenRect> {
-        val iterator = RegionIterator(region)
-        val rect = Rect()
-        val result = mutableListOf<ScreenRect>()
-        while (iterator.next(rect)) {
-            if (result.size >= 256) fail("STALE_OBSERVATION", "Window input region is too complex to verify", json(
-                "reason" to "window_region_unverifiable", "action_executed" to false))
-            result.add(ScreenRect(rect.left, rect.top, rect.right, rect.bottom))
+    /** Full-display gestures may reach the IME and system UI, but never local authorization controls. */
+    private fun protectLocalControls(service: PhoneAccessibilityService, points: List<Pair<Float, Float>>?,
+                                     check: () -> Unit, target: AccessibilityNodeInfo? = null) {
+        var examined = 0
+        fun visit(node: AccessibilityNodeInfo, depth: Int) {
+            check()
+            if (++examined > 1500 || depth > 40) fail("LOCAL_CONTROL_UI", "Local control protection could not finish within its budget")
+            val own = node.packageName?.toString() == context.packageName
+            val label = node.text?.toString().orEmpty()
+            val description = node.contentDescription?.toString().orEmpty()
+            val local = own || LOCAL_CONTROL_LABELS.any { it.equals(label, ignoreCase = true) || it.equals(description, ignoreCase = true) }
+            if (local && (own || node.isVisibleToUser)) {
+                val bounds = Rect(); node.getBoundsInScreen(bounds)
+                if (points == null || pathIntersectsRegion(points, listOf(ScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom))))
+                    fail("LOCAL_CONTROL_UI", "Phone Use authorization controls can only be operated locally")
+            }
+            if (own) return
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                try { visit(child, depth + 1) } finally { child.recycle() }
+            }
         }
-        return result
-    }
-
-    private fun windowEvidence(service: PhoneAccessibilityService, activeWindow: Int): List<WindowEvidence> {
+        if (target != null) { visit(target, 0); return }
+        val root = service.rootInActiveWindow
+        try {
+            if (root?.packageName?.toString() == context.packageName)
+                fail("LOCAL_CONTROL_UI", "Phone Use authorization controls can only be operated locally")
+            if (root?.packageName?.toString() == "com.android.systemui") visit(root, 0)
+        } finally { root?.recycle() }
         val windows = service.windows
         try {
-            if (windows.any { it.id == activeWindow && it.displayId != Display.DEFAULT_DISPLAY })
-                fail("DISPLAY_UNSUPPORTED", "Only the default display is supported")
-            if (windows.size > 64) fail("STALE_OBSERVATION", "Too many windows to verify", json("reason" to "window_region_unverifiable"))
-            return windows.filter { it.displayId == Display.DEFAULT_DISPLAY }.sortedBy { it.id }.map {
-                val bounds = Rect(); it.getBoundsInScreen(bounds)
-                val region = Region(); it.getRegionInScreen(region)
-                WindowEvidence(it.id, it.type, it.layer, bounds, regionRects(region), it.isActive, it.isFocused, it.isInPictureInPictureMode)
+            for (window in windows.filter { it.displayId == Display.DEFAULT_DISPLAY }) {
+                val windowRoot = window.root ?: continue
+                try {
+                    // Only our own UI and System UI can host Phone Use's local controls.
+                    if (windowRoot.packageName?.toString() in setOf(context.packageName, "com.android.systemui")) {
+                        examined = 0
+                        visit(windowRoot, 0)
+                    }
+                } finally { windowRoot.recycle() }
             }
         } finally { windows.forEach { it.recycle() } }
     }
 
-    private fun windowSignature(service: PhoneAccessibilityService, activeWindow: Int, observing: Boolean = false): String {
-        val windows = windowEvidence(service, activeWindow)
-        if (observing && activeWindow != -1 && windows.none { it.id == activeWindow })
-            fail("OBSERVATION_INCONSISTENT", "The active root is not yet represented in the window inventory", json("reason" to "window_inventory_incomplete"))
-        return hash(windows.map {
-            listOf(it.id, it.type, it.layer, it.active, it.focused, it.bounds.flattenToString(), it.region, it.pictureInPicture)
-        })
+    private fun windowDiagnostics(service: PhoneAccessibilityService): JSONArray {
+        val windows = service.windows
+        return try { JSONArray(windows.take(64).map { window ->
+            val bounds = Rect(); window.getBoundsInScreen(bounds)
+            json("window_id" to window.id, "display_id" to window.displayId, "type" to window.type,
+                "layer" to window.layer, "active" to window.isActive, "focused" to window.isFocused,
+                "bounds" to JSONArray(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom)))
+        }) } finally { windows.forEach { it.recycle() } }
     }
 
-    private fun Rect.screenRect() = ScreenRect(left, top, right, bottom)
-    private fun ScreenRect.json() = JSONArray(listOf(left, top, right, bottom))
-    private fun windowDetail(window: WindowEvidence, overlap: List<ScreenRect>) = json(
-        "window_id" to window.id, "type" to window.type, "layer" to window.layer,
-        "bounds" to window.bounds.screenRect().json(), "touchable_region" to JSONArray(window.region.map { it.json() }),
-        "overlap" to JSONArray(overlap.map { it.json() }), "active" to window.active, "focused" to window.focused,
-        "picture_in_picture" to window.pictureInPicture, "region_basis" to "platform_touchable_region",
-        "visual_visibility_verified" to false)
-
-    private fun validateNodeOcclusion(service: PhoneAccessibilityService, snapshot: Snapshot, bounds: Rect, semanticScroll: Boolean): JSONArray {
-        val windows = windowEvidence(service, snapshot.window)
-        val active = windows.find { it.id == snapshot.window } ?: stale(service, snapshot, "window_region_unverifiable")
-        val area = bounds.screenRect()
-        val hits = JSONArray()
-        val exceptions = JSONArray()
-        for (window in windows.filter { it.id != snapshot.window && it.layer > active.layer }) {
-            val overlap = window.region.filter { it.intersects(area) }.map {
-                ScreenRect(maxOf(it.left, area.left), maxOf(it.top, area.top), minOf(it.right, area.right), minOf(it.bottom, area.bottom))
-            }
-            if (overlap.isEmpty()) continue
-            if (semanticScroll && permitsCornerPipScroll(area, overlap,
-                    window.type == AccessibilityWindowInfo.TYPE_APPLICATION, window.pictureInPicture, window.active, window.focused,
-                    active.active, active.focused)) {
-                exceptions.put(windowDetail(window, overlap).put("basis", "platform_pip_in_small_corner_without_focus_or_activation"))
-                continue
-            }
-            hits.put(windowDetail(window, overlap).put("blocking_reason", if (semanticScroll && !window.pictureInPicture)
-                "modality_unverifiable" else "target_intersects_touchable_region"))
-        }
-        if (hits.length() > 0) fail("STALE_ELEMENT", "A higher window blocks this target", diagnostics(service, snapshot, "target_occluded")
-            .put("occlusion", json("source" to "higher_window", "target_bounds" to area.json(), "windows" to hits,
-                "action" to if (semanticScroll) "semantic_scroll" else "node_action", "visible_region_verified" to false)))
-        return exceptions
-    }
-
-    /** Accessibility window lists cannot reveal siblings within the same window. */
-    private fun validateSameWindowOcclusion(service: PhoneAccessibilityService, snapshot: Snapshot, target: AccessibilityNodeInfo,
-        bounds: Rect, check: () -> Unit) {
-        var branch = AccessibilityNodeInfo.obtain(target)
-        var examined = 0
-        try {
-            repeat(40) {
-                check()
-                val parent = branch.parent ?: return
-                try {
-                    for (index in 0 until parent.childCount) {
-                        if (++examined > 1500) stale(service, snapshot, "same_window_occlusion_unverifiable")
-                        if (examined % 16 == 1) check()
-                        val sibling = parent.getChild(index) ?: stale(service, snapshot, "same_window_occlusion_unverifiable")
-                        try {
-                            if (sibling == branch || !sibling.isVisibleToUser || sibling.drawingOrder < branch.drawingOrder) continue
-                            val siblingBounds = Rect(); sibling.getBoundsInScreen(siblingBounds)
-                            if (!Rect.intersects(bounds, siblingBounds)) continue
-                            fail("STALE_ELEMENT", "An overlapping sibling may block this target", diagnostics(service, snapshot, "target_occluded")
-                                .put("occlusion", json("source" to "same_window_sibling", "window_id" to snapshot.window,
-                                    "target_bounds" to bounds.screenRect().json(), "sibling_bounds" to siblingBounds.screenRect().json(),
-                                    "sibling_identity" to accessibilityIdentityHash(sibling), "basis" to "bounds_and_drawing_order",
-                                    "blocking_reason" to "same_window_occlusion_unverifiable", "visible_region_verified" to false)))
-                        } finally { sibling.recycle() }
-                    }
-                    branch.recycle(); branch = AccessibilityNodeInfo.obtain(parent)
-                } finally { parent.recycle() }
-            }
-            stale(service, snapshot, "same_window_occlusion_unverifiable")
-        } finally { branch.recycle() }
-    }
-
-    private fun validateGestureOcclusion(service: PhoneAccessibilityService, snapshot: Snapshot, points: List<Pair<Float, Float>>) {
-        val windows = windowEvidence(service, snapshot.window)
-        val active = windows.find { it.id == snapshot.window } ?: stale(service, snapshot, "window_region_unverifiable")
-        val hits = windows.filter { it.id != active.id && it.layer > active.layer && pathIntersectsRegion(points, it.region) }
-        if (hits.isNotEmpty()) fail("STALE_OBSERVATION", "The gesture path intersects a higher window", diagnostics(service, snapshot, "target_occluded")
-            .put("occlusion", json("source" to "higher_window", "action" to "coordinate_gesture",
-                "path" to JSONArray(points.map { JSONArray(listOf(it.first, it.second)) }),
-                "windows" to JSONArray(hits.map { windowDetail(it, it.region) }), "visible_region_verified" to false)))
-        // Require the whole path to remain within the platform-reported active input region.
-        val outside = Region(0, 0, snapshot.width, snapshot.height)
-        val input = Region()
-        active.region.forEach { input.op(Rect(it.left, it.top, it.right, it.bottom), Region.Op.UNION) }
-        outside.op(input, Region.Op.DIFFERENCE)
-        if (pathIntersectsRegion(points, regionRects(outside))) stale(service, snapshot, "gesture_outside_active_window")
-    }
-
-    /** Detect exposed overlays inside a custom scroll host as well as overlays beside it. */
-    private fun validateDescendantOcclusion(service: PhoneAccessibilityService, snapshot: Snapshot,
-        target: AccessibilityNodeInfo, bounds: Rect, check: () -> Unit) {
-        var examined = 0
-        var comparisons = 0
-        fun visit(parent: AccessibilityNodeInfo, depth: Int) {
-            check()
-            if (depth > 40) stale(service, snapshot, "same_window_occlusion_unverifiable")
-            val visibleChildren = mutableListOf<Pair<AccessibilityNodeInfo, Rect>>()
-            try {
-                for (index in 0 until parent.childCount) {
-                    if (++examined > 1500) stale(service, snapshot, "same_window_occlusion_unverifiable")
-                    if (examined % 16 == 1) check()
-                    val child = parent.getChild(index) ?: stale(service, snapshot, "same_window_occlusion_unverifiable")
-                    val area = Rect(); child.getBoundsInScreen(area)
-                    if (child.isVisibleToUser && area.intersect(bounds)) visibleChildren.add(child to area) else child.recycle()
-                }
-                for (i in visibleChildren.indices) for (j in i + 1 until visibleChildren.size) {
-                    if (++comparisons > 5000) stale(service, snapshot, "same_window_occlusion_unverifiable")
-                    if (comparisons % 32 == 1) check()
-                    val (first, a) = visibleChildren[i]; val (second, b) = visibleChildren[j]
-                    if (Rect.intersects(a, b)) fail("STALE_ELEMENT", "Overlapping child branches may obscure this scrolling region",
-                        diagnostics(service, snapshot, "target_occluded").put("occlusion", json(
-                            "source" to "same_window_descendant_overlap", "window_id" to snapshot.window,
-                            "target_bounds" to bounds.screenRect().json(),
-                            "branch_bounds" to JSONArray(listOf(a.screenRect().json(), b.screenRect().json())),
-                            "branch_identities" to JSONArray(listOf(accessibilityIdentityHash(first), accessibilityIdentityHash(second))),
-                            "basis" to "overlapping_exposed_sibling_branches", "visible_region_verified" to false)))
-                }
-                visibleChildren.forEach { (child, _) -> visit(child, depth + 1) }
-            } finally { visibleChildren.forEach { it.first.recycle() } }
-        }
-        visit(target, 0)
-    }
-
-    private fun collect(root: AccessibilityNodeInfo, width: Int, height: Int, compact: Boolean, check: () -> Unit): Tree {
+    private fun collect(root: AccessibilityNodeInfo, width: Int, height: Int, check: () -> Unit): Tree {
         val states = LinkedHashMap<String, ElementReference>()
         val elements = LinkedHashMap<String, JSONObject>()
         val order = mutableListOf<String>()
         val retained = HashSet<String>()
         var truncated = false
         val screen = Rect(0, 0, width, height)
-        fun visit(node: AccessibilityNodeInfo, path: String, depth: Int, row: String?): String {
-            if (order.size >= 1500 || depth > 40) { truncated = true; return "TRUNCATED" }
+        fun visit(node: AccessibilityNodeInfo, path: String, depth: Int) {
+            if (order.size >= 1500 || depth > 40) { truncated = true; return }
             if (order.size % 32 == 0) check()
             order.add(path)
             val bounds = Rect(); node.getBoundsInScreen(bounds)
             val reference = fingerprint(node)
-            val childLayouts = mutableListOf<Any?>()
-            val childHashes = mutableListOf<String>()
-            val currentRow = if (node.collectionItemInfo != null) path else row
             var complete = true
             for (i in 0 until node.childCount) {
                 if (order.size >= 1500) { truncated = true; complete = false; break }
                 val child = node.getChild(i)
-                if (child == null) { complete = false; childHashes.add("MISSING:$i"); childLayouts.add("MISSING:$i"); continue }
+                if (child == null) { complete = false; continue }
                 try {
-                    val childBounds = Rect(); child.getBoundsInScreen(childBounds)
-                    childLayouts.add(listOf(i, identity(child), childBounds.flattenToString()))
                     val childPath = "$path.$i"
-                    childHashes.add(visit(child, childPath, depth + 1, currentRow ?: if (node.isScrollable) childPath else null))
+                    visit(child, childPath, depth + 1)
                     if (states[childPath]?.complete != true) complete = false
                 } finally { child.recycle() }
             }
-            val parent = path.substringBeforeLast('.', "")
-            val container = currentRow ?: if (node.isScrollable) path else parent.takeUnless { it.isEmpty() || it == "0" }
-            val layout = hash(listOf(identity(node), bounds.flattenToString(), node.childCount,
-                node.isVisibleToUser, node.isEnabled, node.isScrollable, childLayouts))
-            val subtree = hash(listOf(reference.content, childHashes))
-            val nonText = nodeContentHash(identity(node) + listOf(node.contentDescription?.toString(), bounds.flattenToString(),
-                node.isEnabled, node.isVisibleToUser, node.isEditable, node.isPassword, node.actionList.map { it.id }.sorted(),
-                node.textSelectionStart, node.textSelectionEnd, node.isFocused, node.isAccessibilityFocused, logicalItemId(node)), semantics(node))
-            states[path] = ElementReference(reference, layout, subtree, container, complete,
-                identity = accessibilityIdentityHash(node), nonTextContent = nonText, textContent = hash(node.text?.toString()),
-                stableId = if (android.os.Build.VERSION.SDK_INT >= 33) node.uniqueId else null,
-                contentAnchor = if (!node.isPassword && (!node.text.isNullOrEmpty() || !node.contentDescription.isNullOrEmpty()))
-                    hash(listOf(node.text?.toString(), node.contentDescription?.toString())) else null,
-                collectionRow = node.collectionItemInfo != null, logicalItemId = logicalItemId(node))
+            states[path] = ElementReference(reference, accessibilityIdentityHash(node), complete)
             val meaningful = !node.text.isNullOrEmpty() || !node.contentDescription.isNullOrEmpty() ||
                 !node.viewIdResourceName.isNullOrEmpty() || node.isEditable || node.isClickable || node.isLongClickable || node.isScrollable ||
                 !node.hintText.isNullOrEmpty() || !node.error.isNullOrEmpty() || !node.stateDescription.isNullOrEmpty() || node.actionList.isNotEmpty() ||
@@ -431,7 +333,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                     "_on_screen" to Rect.intersects(bounds, screen),
                     "bounds" to JSONArray(listOf(bounds.left, bounds.top, bounds.right, bounds.bottom)))
                 fun optional(key: String, value: Any?, include: Boolean) { element.put(key, value ?: JSONObject.NULL) }
-                optional("text", if (node.isPassword) null else node.text?.toString()?.take(1024), !node.isPassword && !node.text.isNullOrEmpty())
+                optional("text", if (node.isPassword) null else nodeText(node)?.take(1024), !node.isPassword && !nodeText(node).isNullOrEmpty())
                 optional("description", node.contentDescription?.toString()?.take(1024), !node.contentDescription.isNullOrEmpty())
                 optional("view_id", node.viewIdResourceName, !node.viewIdResourceName.isNullOrEmpty())
                 optional("enabled", node.isEnabled, !node.isEnabled)
@@ -446,8 +348,8 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 optional("hint", node.hintText?.toString()?.take(1024), !node.hintText.isNullOrEmpty())
                 optional("error", node.error?.toString()?.take(1024), !node.error.isNullOrEmpty())
                 optional("content_invalid", node.isContentInvalid, node.isContentInvalid)
-                if (!node.isPassword && (node.text?.length ?: 0) > 1024) element.put("text_truncated", true)
-                    .put("_text_hash", conditionTextHash(node.text.toString()))
+                if (!node.isPassword && (nodeText(node)?.length ?: 0) > 1024) element.put("text_truncated", true)
+                    .put("_text_hash", conditionTextHash(nodeText(node).orEmpty()))
                 if ((node.contentDescription?.length ?: 0) > 1024) element.put("description_truncated", true)
                     .put("_description_hash", conditionTextHash(node.contentDescription.toString()))
                 val semanticState = semantics(node)
@@ -455,19 +357,18 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 optional("collection_item", semanticState.collectionItem?.let { JSONArray(it) }, semanticState.collectionItem != null)
                 optional("collection", semanticState.collection?.let { JSONArray(it) }, semanticState.collection != null)
                 element.put("actions", JSONArray(node.actionList.map { actionName(it.id) }))
-                if (node.isEditable && !node.isPassword) element.put("selection", JSONArray(listOf(node.textSelectionStart, node.textSelectionEnd)))
+                if (node.isEditable && !node.isPassword) element.put("selection", JSONArray(listOf(nodeSelection(node).first, nodeSelection(node).second)))
                 elements[path] = element
             }
-            return subtree
         }
-        visit(root, "0", 0, null)
+        visit(root, "0", 0)
         val out = JSONArray()
         order.forEach { path ->
             var parent = path.substringBeforeLast('.', "")
             while (parent.isNotEmpty() && parent !in retained) parent = parent.substringBeforeLast('.', "")
             out.put(elements.getValue(path).put("parent_id", parent.takeIf { it.isNotEmpty() } ?: JSONObject.NULL))
         }
-        return Tree(out, states, order.toSet(), truncated)
+        return Tree(out, states, truncated)
     }
     private fun actionName(id: Int): String = when (id) {
         AccessibilityNodeInfo.ACTION_CLICK -> "tap"
@@ -518,7 +419,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 }, "android_error_code" to errorCode))
             }
         })
-        val screenshotDeadline = SystemClock.elapsedRealtime() + minOf(5000L, budget.remaining())
+        val screenshotDeadline = SystemClock.elapsedRealtime() + minOf(5000L, (budget.remaining() - 25).coerceAtLeast(0))
         while (true) {
             check()
             val remaining = screenshotDeadline - SystemClock.elapsedRealtime()
@@ -549,7 +450,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         "reason" to reason, "action_executed" to false,
         "snapshot_age_ms" to snapshot?.let { SystemClock.elapsedRealtime() - it.created },
         "snapshot_ui_version" to snapshot?.version, "current_ui_version" to PhoneAccessibilityService.version.get(),
-        "event_history_complete" to snapshot?.let { service.scrollEvidenceSince(it.version, it.window).complete },
+        "event_history_complete" to snapshot?.let { service.eventHistoryComplete(it.version) },
         "event_evidence_scope" to "delivered_accessibility_events",
         "events" to if (snapshot != null) service.eventsSince(snapshot.version, snapshot.window) else JSONArray())
 
@@ -577,53 +478,38 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             if (snapshot != null) {
                 if (snapshot.accessibilityInstance != service.instanceId) stale(service, snapshot, "service_instance_changed")
                 if (SystemClock.elapsedRealtime() - snapshot.created > 30_000) stale(service, snapshot, "expired")
-                if (root?.windowId != snapshot.window || root?.packageName?.toString() != snapshot.app) stale(service, snapshot, "window_changed")
+                if (args.has("element_id") && (root?.windowId != snapshot.window || root?.packageName?.toString() != snapshot.app))
+                    stale(service, snapshot, "window_changed")
                 if (geometry() != Triple(snapshot.width, snapshot.height, snapshot.rotation)) stale(service, snapshot, "display_changed")
-                if (windowSignature(service, snapshot.window) != snapshot.windows) stale(service, snapshot, "window_occlusion_changed")
-                // Coordinates have no target/container evidence with which to approve a changed scene.
-                if (!args.has("element_id") && snapshot.relevantVersion != service.relevantVersion(snapshot.window))
-                    stale(service, snapshot, "content_changed")
             }
         } finally { root?.recycle() }
         return snapshot
     }
-    private data class ValidatedTarget(val node: AccessibilityNodeInfo, val version: Long, val validation: JSONObject)
+    private fun validateTarget(service: PhoneAccessibilityService, snapshot: Snapshot, node: AccessibilityNodeInfo,
+                               path: String, insert: Boolean) {
+        if (!node.refresh()) stale(service, snapshot, "element_missing", "STALE_ELEMENT")
+        val actual = ElementReference(fingerprint(node), accessibilityIdentityHash(node))
+        targetChangeReason(snapshot.nodes, mapOf(path to actual), path, insert)?.let {
+            stale(service, snapshot, it, "STALE_ELEMENT")
+        }
+        val bounds = Rect(); node.getBoundsInScreen(bounds)
+        if (!node.isEnabled || !node.isVisibleToUser || bounds.isEmpty || !Rect.intersects(bounds, Rect(0, 0, snapshot.width, snapshot.height)))
+            stale(service, snapshot, "target_unavailable", "ELEMENT_UNAVAILABLE")
+    }
 
-    private fun target(service: PhoneAccessibilityService, args: JSONObject, snapshot: Snapshot?, name: String, check: () -> Unit): ValidatedTarget {
+    private fun target(service: PhoneAccessibilityService, args: JSONObject, snapshot: Snapshot?, name: String, check: () -> Unit): AccessibilityNodeInfo {
         if (snapshot == null) fail("INVALID_ARGUMENT", "element_id requires observation_id")
         val path = args.string("element_id")
         if (path !in snapshot.exported) stale(service, snapshot, "element_not_in_observation", "STALE_ELEMENT")
-        val expected = snapshot.nodes.getValue(path)
-        val insert = name == "input_text" && args.optString("mode") == "insert"
-        val semanticScroll = name == "scroll"
-        val version = service.relevantVersion(snapshot.window)
         var node = service.rootInActiveWindow ?: stale(service, snapshot, "window_changed")
         try {
-            val current = collect(node, snapshot.width, snapshot.height, false, check)
-            val evidence = if (semanticScroll) service.scrollEvidenceSince(snapshot.version, snapshot.window) else null
-            val reason = if (evidence != null) scrollChangeReason(snapshot.nodes, current.nodes, path, evidence)
-                else targetChangeReason(snapshot.nodes, current.nodes, path, insert)
-            reason?.let {
-                stale(service, snapshot, it, "STALE_ELEMENT")
-            }
-            if (version != service.relevantVersion(snapshot.window)) stale(service, snapshot, "changed_during_validation")
             for (part in path.split('.').drop(1)) {
+                check()
                 val child = node.getChild(part.toInt()) ?: stale(service, snapshot, "element_missing", "STALE_ELEMENT")
                 node.recycle(); node = child
             }
-            if (!node.refresh() || !expected.reference.matches(fingerprint(node), insert)) stale(service, snapshot, "target_changed", "STALE_ELEMENT")
-            val bounds = Rect(); node.getBoundsInScreen(bounds)
-            if (!node.isEnabled || !node.isVisibleToUser || bounds.isEmpty || !Rect.intersects(bounds, Rect(0, 0, snapshot.width, snapshot.height)))
-                stale(service, snapshot, "target_unavailable", "ELEMENT_UNAVAILABLE")
-            if (semanticScroll && !node.isScrollable) stale(service, snapshot, "target_not_scrollable", "ACTION_UNSUPPORTED")
-            val occlusionExceptions = validateNodeOcclusion(service, snapshot, bounds, semanticScroll)
-            validateSameWindowOcclusion(service, snapshot, node, bounds, check)
-            if (semanticScroll) validateDescendantOcclusion(service, snapshot, node, bounds, check)
-            if (windowSignature(service, snapshot.window) != snapshot.windows) stale(service, snapshot, "window_occlusion_changed")
-            if (version != service.relevantVersion(snapshot.window)) stale(service, snapshot, "changed_during_validation")
-            return ValidatedTarget(node, version, json("strategy" to if (semanticScroll) "semantic_scroll" else "target_and_container",
-                "allowed_change" to if (semanticScroll && expected.subtree != current.nodes[path]?.subtree) "verified_descendant_text_refresh" else "none",
-                "event_history_complete" to evidence?.complete, "occlusion_exceptions" to occlusionExceptions))
+            validateTarget(service, snapshot, node, path, name == "input_text" && args.optString("mode") == "insert")
+            return node
         } catch (e: Exception) { node.recycle(); throw e }
     }
     override fun act(name: String, args: JSONObject, check: () -> Unit): JSONObject = act(name, args, "legacy", check)
@@ -646,8 +532,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 fail("LOCAL_CONTROL_UI", "Phone Use authorization controls can only be operated locally")
         } finally { activeRoot?.recycle() }
         if (name == "input_text" || (name in setOf("tap", "long_press", "scroll") && args.has("element_id"))) {
-            val validated = target(service, args, snapshot, name, check)
-            val node = validated.node
+            val node = target(service, args, snapshot, name, check)
             try {
                 val action = when (name) {
                     "tap" -> AccessibilityNodeInfo.ACTION_CLICK
@@ -659,34 +544,38 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                     }
                     else -> AccessibilityNodeInfo.ACTION_SET_TEXT
                 }
-                if (node.actionList.none { it.id == action }) fail("ACTION_UNSUPPORTED", "Node does not support this action; no automatic fallback")
-                val bundle = if (name == "input_text") textArguments(node, args) else null
-                val cursor = if (name == "input_text" && args.optString("mode") == "insert") {
-                    if (node.actionList.none { it.id == AccessibilityNodeInfo.ACTION_SET_SELECTION })
-                        fail("ACTION_UNSUPPORTED", "Cannot restore the insertion cursor on this field")
-                    node.textSelectionStart + args.getString("text").length
-                } else null
                 check()
                 validateContext(service, args, client)
-                if (validated.version != service.relevantVersion(snapshot!!.window)) stale(service, snapshot, "changed_before_dispatch")
+                validateTarget(service, snapshot!!, node, args.getString("element_id"), name == "input_text" && args.optString("mode") == "insert")
+                if (node.actionList.none { it.id == action }) fail("ACTION_UNSUPPORTED", "Node does not support this action; no automatic fallback")
+                if (node.packageName?.toString() == context.packageName || node.packageName?.toString() == "com.android.systemui")
+                    protectLocalControls(service, null, check, node)
+                val bundle = if (name == "input_text") textArguments(node, args) else null
+                // Some editors expose SET_SELECTION only once they contain text. Cursor restoration
+                // is optional; SET_TEXT can still perform the requested insertion exactly once.
+                val cursor = if (name == "input_text" && args.optString("mode") == "insert" &&
+                    node.actionList.any { it.id == AccessibilityNodeInfo.ACTION_SET_SELECTION })
+                    nodeSelection(node).first + args.getString("text").length else null
+                check()
+                validateContext(service, args, client)
                 if (ready().instanceId != service.instanceId) stale(service, snapshot, "service_instance_changed")
                 if (geometry() != Triple(snapshot.width, snapshot.height, snapshot.rotation)) stale(service, snapshot, "display_changed")
                 if (!node.performAction(action, bundle)) fail("ACTION_REJECTED", "Android rejected node action; observe before retrying")
-                val restored = if (cursor != null && runCatching { check() }.isSuccess) node.performAction(
+                val restored = if (cursor != null && runCatching { check() }.isSuccess) runCatching { node.performAction(
                     AccessibilityNodeInfo.ACTION_SET_SELECTION, Bundle().apply {
                         putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, cursor)
                         putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, cursor)
-                    }) else null
+                    }) }.getOrDefault(false) else null
                 return json("mechanism" to "node_action", "confirmation" to "android_accepted", "business_success" to JSONObject.NULL,
-                    "cursor_restored" to restored, "validation" to validated.validation)
+                    "text_verified" to if (name == "input_text") false else null, "cursor_restored" to restored)
             } finally { node.recycle() }
         }
         when (name) {
             "tap", "long_press", "swipe", "scroll" -> return gesture(service, name, args) { points ->
                 check()
                 validateContext(service, args, client)
-                validateGestureOcclusion(service, snapshot!!, points)
-                // Region acquisition is also a read and may race a window/event change.
+                protectLocalControls(service, points, check)
+                check()
                 validateContext(service, args, client)
             }
             "back", "home", "recents" -> {
@@ -711,8 +600,8 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             "replace" -> text
             "insert" -> {
                 if (node.isPassword) fail("ACTION_UNSUPPORTED", "Cannot safely insert into a password field")
-                val old = node.text?.toString() ?: fail("ACTION_UNSUPPORTED", "Current text is not readable")
-                val start = node.textSelectionStart; val end = node.textSelectionEnd
+                val old = nodeText(node) ?: fail("ACTION_UNSUPPORTED", "Current text is not readable")
+                val (start, end) = nodeSelection(node)
                 if (start < 0 || end < start || end > old.length || old.length + text.length > 20_000)
                     fail("ACTION_UNSUPPORTED", "Text selection is not available or content is too large")
                 old.substring(0, start) + text + old.substring(end)

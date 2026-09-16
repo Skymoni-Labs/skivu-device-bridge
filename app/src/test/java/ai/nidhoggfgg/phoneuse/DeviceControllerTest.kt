@@ -177,6 +177,21 @@ class DeviceControllerTest {
     @Test fun canonicalPayloadIgnoresObjectKeyOrder() {
         assertEquals(canonical(json("a" to 1, "b" to json("x" to "中文"))), canonical(json("b" to json("x" to "中文"), "a" to 1)))
     }
+    @Test fun defaultActionsCanRunConsecutivelyWithoutAnyObservation() {
+        val backend = Backend()
+        val controller = DeviceController(backend, { 0 }, { true })
+        try {
+            for ((index, tool) in listOf("home", "back", "recents").withIndex()) {
+                val result = controller.call("client", tool, action("action-$index"))
+                assertEquals("executed", result.getString("state"))
+                assertTrue(result.getBoolean("action_executed"))
+                assertFalse(result.has("observation"))
+                assertFalse(result.has("observation_status"))
+            }
+            assertTrue(backend.observedOptions.isEmpty())
+        } finally { controller.stop() }
+    }
+
     @Test fun observationFailurePreservesExecutedActionAndItsClientWithoutReplay() {
         val backend = Backend().apply {
             observationFailure = DeviceError("OBSERVATION_INCONSISTENT", "Changing", json("reason" to "content_changed", "attempts" to 3))

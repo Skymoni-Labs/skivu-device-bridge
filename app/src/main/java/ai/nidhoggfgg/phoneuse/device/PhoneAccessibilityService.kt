@@ -30,11 +30,7 @@ class PhoneAccessibilityService : AccessibilityService() {
 
     @Synchronized fun relevantVersion(window: Int): Long = maxOf(globalVersion, windowVersions[window] ?: 0)
 
-    @Synchronized internal fun scrollEvidenceSince(previous: Long, window: Int): ScrollEventEvidence =
-        ScrollEventEvidence(previous >= discardedThroughVersion, changes.filter {
-            it.version > previous && (it.window == window || it.window == -1 ||
-                it.type == "TYPE_WINDOW_STATE_CHANGED" || it.type == "TYPE_WINDOWS_CHANGED")
-        }.map { ScrollChange(it.type, it.sourceIdentity, it.textOnly) })
+    @Synchronized internal fun eventHistoryComplete(previous: Long): Boolean = previous >= discardedThroughVersion
 
     @Synchronized fun eventsSince(previous: Long, window: Int): org.json.JSONArray = org.json.JSONArray().apply {
         changes.filter { it.version > previous && (it.window == window || it.window == -1 ||

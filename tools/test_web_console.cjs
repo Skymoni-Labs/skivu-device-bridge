@@ -125,6 +125,9 @@ const server = http.createServer(async (req, res) => {
     await page.locator('#run').click();
     await page.waitForFunction(() => !document.getElementById('run').disabled);
     assert.equal(calls.at(-1).arguments.package_name, 'ai.example.app');
+    assert.equal(calls.at(-1).arguments.observe_after, undefined);
+    assert.match(await page.locator('#result-status').textContent(), /已返回.*executed/);
+    assert.doesNotMatch(await page.locator('#result-status').textContent(), /观察未完成/);
     failNextAction = true; await page.locator('#new-id').click(); await page.locator('#run').click();
     await page.waitForFunction(() => !document.getElementById('run').disabled);
     assert.match(await page.locator('#notice').textContent(), /Action rejected/);

@@ -198,9 +198,10 @@ class DeviceController(
     }
     private fun pending(request: Request): JSONObject = json(
         "state" to request.phase, "request_id" to request.id, "action_executed" to request.actionExecuted,
-        "observation_status" to request.observationStatus, "observation_purpose" to request.observationPurpose,
         "message" to "Still pending; query get_status with this request_id. Do not replay with a new ID."
-    ).also(::addRecovery)
+    ).apply {
+        if (request.observationPurpose != null) put("observation_status", request.observationStatus).put("observation_purpose", request.observationPurpose)
+    }.also(::addRecovery)
     private fun complete(request: Request, result: JSONObject) = synchronized(requests) {
         addRecovery(result)
         val remaining = retentionBudget - requests.values.filter { it !== request }.sumOf(::retainedSize)

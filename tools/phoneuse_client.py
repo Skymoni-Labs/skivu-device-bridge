@@ -744,6 +744,8 @@ def main():
             if args.tool != "observe":
                 parser.error("--full-tree/--compact apply to observe")
             arguments["compact"] = not args.full_tree
+            if args.full_tree:
+                arguments["output"] = "legacy"
         try:
             result = connection.send(args.device_id, "/api", {"tool": args.tool, "arguments": arguments})
         except Exception as error:

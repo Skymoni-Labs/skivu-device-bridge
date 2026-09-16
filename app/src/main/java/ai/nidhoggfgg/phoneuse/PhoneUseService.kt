@@ -119,8 +119,8 @@ class PhoneUseService : Service() {
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_control)
             .setContentTitle("Phone Use").setContentText(text).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .addAction(0, if (paused) "恢复" else "暂停", action(if (paused) RESUME else PAUSE, 1))
-            .addAction(0, "停止服务", action(STOP, 3)).build()
+            .addAction(0, if (paused) "Phone Use：恢复" else "Phone Use：暂停", action(if (paused) RESUME else PAUSE, 1))
+            .addAction(0, "Phone Use：停止服务", action(STOP, 3)).build()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {

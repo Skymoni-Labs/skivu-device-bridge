@@ -5,6 +5,19 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ToolCatalogObservationTest {
+    @Test fun catalogDefaultsMatchImmediateIndependentCapabilities() {
+        val tools = ToolCatalog.all()
+        for (index in 0 until tools.length()) {
+            val tool = tools.getJSONObject(index)
+            val fields = tool.getJSONObject("inputSchema").getJSONObject("properties")
+            if (tool.getString("name") == "observe") {
+                assertEquals(0, fields.getJSONObject("stable_wait_ms").getInt("default"))
+                assertEquals("decision", fields.getJSONObject("output").getString("default"))
+            }
+            if (fields.has("observe_after")) assertFalse(fields.getJSONObject("observe_after").getBoolean("default"))
+        }
+    }
+
     @Test fun sharedOptionsAcceptCombinedConditionsAndValidatedOutputScope() {
         val options = json("mode" to "both", "timeout_ms" to 60000, "output" to "decision", "diagnostics" to true,
             "include_details" to true, "region" to json("left" to 0, "top" to 1, "right" to 50, "bottom" to 70),

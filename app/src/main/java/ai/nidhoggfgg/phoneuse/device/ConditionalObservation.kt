@@ -56,7 +56,7 @@ internal class ConditionalObserver(private val clock: () -> Long, private val sl
             capture: (ObservationBudget, () -> Unit) -> JSONObject): JSONObject {
         val conditional = args.has("wait_until")
         val budget = ObservationBudget(clock, args.integer("timeout_ms", if (conditional) 10_000 else 20_000, 1, 60_000))
-        val quietWait = args.integer("stable_wait_ms", 600, 0, 2000)
+        val quietWait = args.integer("stable_wait_ms", 0, 0, 2000)
         val maxAttempts = args.integer("max_attempts", 3, 1, 3)
         val checked = { check(); budget.check() }
         var attempts = 0
@@ -64,6 +64,14 @@ internal class ConditionalObserver(private val clock: () -> Long, private val sl
         var last: JSONObject? = null
         var lastError: DeviceError? = null
         var phase = "quiet_wait"
+        val started = clock()
+        var waitDuration = 0L
+        fun timings(value: JSONObject): JSONObject = value.put("elapsed_ms", clock() - started)
+            .put("wait_ms", waitDuration).put("collection_ms", clock() - started - waitDuration)
+        fun wait(ms: Long) {
+            val before = clock()
+            try { sleep(ms) } finally { waitDuration += clock() - before }
+        }
         fun failure(error: Exception): JSONObject {
             val timeout = (error as? DeviceError)?.code == "OBSERVATION_TIMEOUT"
             // A deadline after a successful condition check is an unmet wait; a later failed
@@ -90,11 +98,11 @@ internal class ConditionalObserver(private val clock: () -> Long, private val sl
                     phase = "quiet_wait"
                     checked()
                     val quietDeadline = clock() + minOf(quietWait.toLong(), budget.remaining())
-                    var version = stamp()
+                    var version = if (quietWait > 0) stamp() else 0L
                     var quietSince = clock()
                     while (clock() < quietDeadline && clock() - quietSince < 120) {
                         checked()
-                        sleep(minOf(25L, quietDeadline - clock(), budget.remaining()).coerceAtLeast(1))
+                        wait(minOf(25L, quietDeadline - clock(), budget.remaining()).coerceAtLeast(1))
                         val next = stamp()
                         if (next != version) { version = next; quietSince = clock() }
                     }
@@ -109,7 +117,7 @@ internal class ConditionalObserver(private val clock: () -> Long, private val sl
                         collected = true
                         value.put("collection_attempts", attempts).put("inconsistency_detected", inconsistent > 0)
                         if (!conditional || value.optJSONObject("condition")?.optString("status") == "satisfied")
-                            return value.put("observation_status", "complete")
+                            return timings(value.put("observation_status", "complete"))
                         break
                     } catch (e: DeviceError) {
                         if (e.code != "OBSERVATION_INCONSISTENT") throw e
@@ -120,9 +128,9 @@ internal class ConditionalObserver(private val clock: () -> Long, private val sl
                 if (!conditional && !collected) throw lastError!!
                 phase = "condition_wait"
                 checked()
-                sleep(minOf(100L, budget.remaining()))
+                wait(minOf(100L, budget.remaining()))
             }
-        } catch (e: Exception) { return failure(e) }
+        } catch (e: Exception) { return timings(failure(e)) }
     }
 }
 

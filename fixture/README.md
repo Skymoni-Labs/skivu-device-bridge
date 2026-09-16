@@ -1,6 +1,6 @@
 # Phone Use 可控设备测试页
 
-独立包 `ai.nidhoggfgg.phoneuse.fixture`，只生成 debug 变体，不包含真实账号、业务数据或网络请求。测试通过真实无障碍服务观察和操作控件，并通过只读 CounterProvider 核对接收目标、动作次数及 scrollY。
+独立包 `ai.nidhoggfgg.phoneuse.fixture`，只生成 debug 变体，不包含真实账号、业务数据或网络请求。测试通过真实无障碍服务观察和操作控件，并通过只读 CounterProvider 核对接收目标、动作次数、scrollY 及最终文本。
 
 在专用模拟器上运行：
 
@@ -18,12 +18,12 @@ adb -s emulator-5554 shell am start -n ai.nidhoggfgg.phoneuse.fixture/.ScenarioA
 adb -s emulator-5554 shell content query --uri content://ai.nidhoggfgg.phoneuse.fixture.counters/state
 ```
 
-场景包括 delayed、skeleton、duplicate、static、text_refresh、unidentified_refresh、rebind、reorder、replace、move、user_scroll、modal、popup、full_popup、same_window、descendant_overlay、focus 和 pip。`unidentified_refresh` 故意不提供逻辑条目契约，用于验证普通未知身份文字变化仍被拒绝。启动新场景前应 force-stop 测试包，确保清空计数及旧窗口。
+场景包括 delayed、skeleton、duplicate、static、text_refresh、unidentified_refresh、rebind、reorder、replace、move、user_scroll、modal、popup、full_popup、same_window、descendant_overlay、focus、keyboard、selection、carousel、target_replace、secure 和 pip。启动新场景前应 force-stop 测试包，确保清空计数及旧窗口。
 
-列表行显式提供稳定的逻辑条目 ID，用于验证受限的文字刷新规则。真实第三方应用通常不提供这项约定，其动态列表不能据此宣称已经通过验证。PiP 场景存在不代表某设备的 PiP 放行路径已通过；实际完成的设备验收见 [验证记录](../docs/validation.md)。
+本轮验证目标：普通文字刷新、列表后代变化、装饰层和几何重叠不阻断选定容器的语义滚动；所选节点替换、目标移动和节点所属窗口变化仍拒绝。`target_replace` 用相同文本和路径的新控件验证节点身份保护；`carousel` 每 75 ms 更新覆盖整个页面的装饰文字，验证即时观察及连续目标操作。
 
-逻辑条目契约由 provider 在行节点 `AccessibilityNodeInfo.extras["ai.nidhoggfgg.phoneuse.logical_item_id"]` 声明，必须是非空且不超过 256 字符的字符串，并跟随业务条目而非复用的控件或槽位。只在 widget `uniqueId`、唯一不变内容锚、完整文字事件日志和其余结构状态证据同时满足时才考虑文字刷新放行。固定序号、位置或 `uniqueId` 单独均不是业务身份依据。
+`keyboard`、`focus` 和 `selection` 覆盖中文替换、插入、仅选区变化、显式附带观察及独立读回。测试同时检查观察中的最终文本和 CounterProvider 的实际文本值，不能只检查请求计数。键盘退格测试从真实 IME 键边界确定截图位置，经 screenshot.scale_x/scale_y 映射后执行一次坐标点击，断言实际只删除一个字符。
 
-`keyboard` 和 `animation` 可分别单独启动键盘与局部视觉动画。非矩形平台输入区域目前由纯逻辑测试覆盖，透明像素并不构成此设备场景；无障碍树未暴露的绘制浮层也不能保证检出。窗口区域来自 Android 的 [getRegionInScreen](https://developer.android.com/reference/android/view/accessibility/AccessibilityWindowInfo#getRegionInScreen(android.graphics.Region))，表示输入区域，不能称作已验证的视觉可见区域。
+列表中的逻辑条目 ID 保留为测试数据；普通第三方应用不需要实现该约定。滚动不再依赖逻辑条目、内容锚或事件日志的整页证明。浮窗与 PiP 由截图供调用方判断，测试不将几何重叠当作已确认遮挡。
 
 Android 报告输出到 `app/build/reports/androidTests/connected/debug/`。纯逻辑投影基线由 `ConditionalObservationTest.fixedCatalogProjectionBaselineUsesTheSameInternalNodes` 在 JVM 测试 XML 中输出节点数、UTF-8 字节数及 MCP 文本块序列化字节数；这不是实际业务任务耗时或视觉成本指标。

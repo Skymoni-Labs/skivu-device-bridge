@@ -445,6 +445,7 @@ class ClientTest(unittest.TestCase):
         with patch("sys.argv", args), patch("sys.stdout", output), patch.object(client, "utf8_stdio"), patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=result) as post:
             client.main()
         self.assertFalse(post.call_args.args[2]["arguments"]["compact"])
+        self.assertEqual("legacy", post.call_args.args[2]["arguments"]["output"])
         self.assertEqual(b"jpeg bytes", screenshot_path.read_bytes())
         self.assertIn("中文", output.getvalue())
         value = json.loads(output.getvalue())
@@ -522,6 +523,7 @@ class ClientTest(unittest.TestCase):
                 self.assertTrue(client.observation_incomplete(value))
         self.assertFalse(client.observation_incomplete({"condition": {"status": "satisfied", "timed_out": False}, "screenshot": None}))
         self.assertTrue(client.observation_incomplete({"state": "executed"}, {"observe_after": True}))
+        self.assertFalse(client.observation_incomplete({"state": "executed", "action_executed": True}))
         with patch.object(self.connection, "send", return_value={"observation_status": "failed", "error": {"code": "OBSERVATION_TIMEOUT"}}):
             value = self.connection.batch([{"device_id": "phone-a", "tool": "observe"}])
         self.assertEqual({"OBSERVATION_TIMEOUT": 1}, value["summary"]["observation_error_codes"])

@@ -72,7 +72,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 | get_capabilities | 无 |
 | get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
 | cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
-| observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 600；max_attempts：1–3，默认 3；timeout_ms、wait_until、output、diagnostics、include_details、region、subtree 见下文 |
+| observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 0（不等待）；max_attempts：1–3，默认 3；timeout_ms、wait_until、output、diagnostics、include_details、region、subtree 见下文 |
 | acquire_device | 可选 ttl_ms：1000–300000，默认 60000；续期必须携带当前 lease_id |
 | release_device | lease_id：释放本客户端的测试占用 |
 | list_apps | 无；仅列出系统允许发现且带启动入口的应用 |
@@ -89,7 +89,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 所有 `tap` 至 `launch_app` 输入动作必填 `request_id`。`request_id` 最多 128 字符。可选：
 
-- `observation_id`：用于检查界面是否过期；节点及坐标动作（tap/long_press/swipe/scroll/input_text）必填，导航/启动应用可选。
+- `observation_id`：关联设备、显示几何和目标引用；节点及坐标动作（tap/long_press/swipe/scroll/input_text）必填，导航/启动应用可选。
 - `expected_window_id`：预期的活动窗口。
 - `observe_after`：动作后附带新观察，默认 false。
 - `observation_options`：复用 `observe` 的观察参数；仅在 `observe_after:true` 或 `observe_on_rejection:true` 时允许。不是动作目标参数，不能包含 request_id、device_id 等字段。
@@ -100,7 +100,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 节点与坐标不可混用。节点操作只使用节点明确支持的操作，不自动转成坐标点击。节点滚动支持 forward/backward；区域滚动支持 forward/down、backward/up、left/right，方向指内容浏览方向。文本最多 10000 字符，允许空串清空。
 
-`replace` 使用 ACTION_SET_TEXT 替换全部内容。`insert` 读取现有文本和 selection，将选区替换为给定文本，再通过 ACTION_SET_TEXT 写入组合结果，并尝试恢复插入位置的光标。密码、不可读文本、未知选区或无法设置选区的字段会返回 ACTION_UNSUPPORTED。插入后 `cursor_restored` 表示 Android 是否接受光标恢复；null 表示无须恢复或取消后未尝试。它不是完整输入法，富文本、特殊编辑器和应用行为需要实机验证。
+`input_text` 直接重新验证所选编辑节点，不自动聚焦、点击、读回或等待页面。返回 `text_verified:false`，系统接受不表示文本已验证。AI 可独立观察检查文本，或显式请求附带观察。`replace` 使用 ACTION_SET_TEXT 替换全部内容。`insert` 读取现有文本和 selection，将选区替换为给定文本，再通过 ACTION_SET_TEXT 写入组合结果，并尝试恢复插入位置的光标。编辑节点标记 isShowingHintText 时，提示文字保留为 hint，输入内容视为空串；可读空串且系统选区为 (-1,-1) 时使用唯一插入位置 (0,0)。非空或不可读文本的未知选区、密码字段返回 ACTION_UNSUPPORTED。光标恢复是可选执行步骤：未声明 ACTION_SET_SELECTION 的编辑框仍可执行文本插入，但不尝试恢复光标。插入后 `cursor_restored` 表示 Android 是否接受光标恢复；null 表示无须恢复、节点未声明选区设置能力或取消后未尝试。它不是完整输入法，富文本、特殊编辑器和应用行为需要实机验证。
 
 ## 观察与坐标
 
@@ -115,9 +115,11 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 - 元素 ID 是快照内部路径，每个客户端最多保留八份快照，每份最长 30 秒；已缓存结构指纹总估算内存预算 4 MiB，不在快照缓存中保留截图。客户端只能淘汰自己的快照；预算不能容纳新快照时返回 BUSY、reason:snapshot_budget_exceeded，不挤掉其他客户端的有效引用。不能将元素 ID 当作永久 ID。
 - 最多采集 1500 个节点，深度最多 40，单个文本/描述截断至 1024 字符。password 文本不返回。节点指纹使用完整字段的摘要，不依赖截断文本。
 - 截图失败时 `screenshot.available=false`，附带原因和 Android 错误码；与 `tree.available=false` 分别报告。未请求的部分为 null。
-- 采集前等待目标窗口短暂安静（120 ms），单次等待最多 stable_wait_ms，每轮一致性采集最多尝试 max_attempts 次。持续动画不会无限等待；每次采集仍核验前后目标窗口事件、窗口、应用、显示几何及遮挡。无条件观察的重采次数耗尽时返回 OBSERVATION_INCONSISTENT；条件观察可在总预算内进行多轮。只重采观察，绝不因此重放动作。
-- 内容版本变化触发重新解析和目标校验，不再一律拒绝。目标字段、节点身份、祖先布局、所属容器内容、窗口或遮挡变化仍拒绝；列表节点复用不凭相同路径放行。replace 不因单纯选区变化失效，insert 必须匹配原文本和选区。坐标动作仍采用严格的观察上下文保护；节点失败不自动降级为坐标动作。
-- 错误保持原 code，并补充 `error.reason`、可取得的 `snapshot_age_ms/snapshot_ui_version/current_ui_version/events`。区分过期、淘汰、客户端/实例变化、内容/窗口/布局/容器变化。动作前拒绝返回 `action_executed:false`；无法确认是否输入时该字段为 null。
+- 默认立即采集当前可用状态；只有显式 `stable_wait_ms>0` 才等待最多该时长的短暂安静（120 ms），不代表业务就绪。窗口/应用切换或显示几何改变引发有限重采；普通内容事件、持续动画和窗口清单暂不完整不使观察整体失败。无条件观察最多尝试 max_attempts 次；条件观察可在总预算内进行多轮。只重采观察，绝不重放动作。
+- 节点动作沿原路径找到候选，核验节点身份、目标字段、可见/可用状态及请求动作，不采集整页树、不比较祖先布局或容器子树。路径相同但节点已替换仍拒绝；目标文本、边界或可用状态改变仍需要重新选择。replace 忽略单纯选区变化；insert 匹配原文本和选区。
+- 坐标动作关联默认显示屏，保留引用归属、有效期、服务实例、显示尺寸/旋转和坐标范围检查。普通内容刷新、活动应用变化、输入法出现/消失和跨窗口路径不整体作废坐标；只有显式 expected_window_id 才要求指定活动窗口。Phone Use 自身窗口和通知中的本地控制按钮始终保护。
+- 不以 sibling 边界、绘制顺序、高层窗口重叠推断操作失败；AI 结合截图选择节点或坐标机制。系统拒绝如实返回，不自动重试、降级或选择其他目标。
+- 错误保持原 code，并补充 `error.reason`、可取得的 `snapshot_age_ms/snapshot_ui_version/current_ui_version/events`。区分过期、淘汰、客户端/实例变化、显示变化和目标缺失/替换/字段变化。动作前拒绝返回 `action_executed:false`；无法确认是否输入时该字段为 null。
 
 界面事件异步到达，以上检查不能消除所有竞争条件。屏幕内容可在最终检查与系统动作之间变化。
 
@@ -159,15 +161,17 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 condition.element_ids 用于说明内部匹配结果；节点动作仍只能引用该观察 tree.elements 实际导出的节点。仅截图模式或范围投影可能不导出匹配节点，需要操作时请求包含该节点的树观察。
 
+树和截图分别返回 started_at_ms / finished_at_ms 及 available；请求其中一项时不采集另一项作为替代。显式截图条件包含 element 或 subtree 时，内部按请求采集节点用于匹配，但不导出树。`elapsed_ms`、`wait_ms`、`collection_ms` 分别报告总耗时、明确等待耗时和采集处理耗时。
+
 `diagnostics:true` 返回采集 started_at_ms、finished_at_ms，以及有界 captures 中的前后窗口、包名、ui_version、时点和 inconsistency_reason；`capture_diagnostics_truncated` 表示诊断列表截断。`consistency_scope` 说明检查范围。这些检查不承诺截图与树具有同帧原子性。
 
 ### 决策输出与范围
 
-`output` 默认 `legacy`，保留原输出兼容性。`output:"decision"` 只改变对外树投影，保留节点路径 element_id、必要的 parent_id、内容、边界、真实支持的动作及影响操作的状态。仅有 hint、error、state_description 的节点也可保留。默认省略 class、view_id 和未命名动作；`include_details:true` 展开 class、view_id、raw_actions。未知 Android 动作不会被当作可执行动作。
+`output` 默认 `decision`；需要旧格式时显式传 `output:"legacy"`。`output:"decision"` 只改变对外树投影，保留节点路径 element_id、必要的 parent_id、内容、边界、真实支持的动作及影响操作的状态。仅有 hint、error、state_description 的节点也可保留。默认省略 class、view_id 和未命名动作；`include_details:true` 展开 class、view_id、raw_actions。未知 Android 动作不会被当作可执行动作。
 
 精简布尔状态按 `tree.state_defaults` 解读：enabled、visible 默认为 true；editable、password、focused、checkable、checked、selected、content_invalid 默认为 false。节点输出其偏离默认值的状态。省略字段不能被误读为缺少编辑能力或与默认值相反的状态。
 
-`region:{left,top,right,bottom}` 使用显示器物理像素，保留与区域相交的节点；`subtree:{observation_id,element_id}` 使用同客户端的原快照定位子树，读取前必须重新验证目标，不能直接套用旧路径。两者可共同限制输出，不缩小内部采集范围，也不裁剪截图。导出的节点仍受原观察、窗口、容器和目标校验约束。
+`region:{left,top,right,bottom}` 使用显示器物理像素，保留与区域相交的节点；`subtree:{observation_id,element_id}` 使用同客户端的原快照定位子树，读取前必须重新验证目标，不能直接套用旧路径。两者可共同限制输出，不缩小内部采集范围，也不裁剪截图。导出的节点仍受原观察、设备/显示和目标校验约束。
 
 `tree.collection_truncated`（兼容字段 truncated）表示采集达到边界；`collection_complete` 还检查子节点读取是否缺失；`scope_clipped` 表示请求了范围投影；`collected_nodes`、`output_nodes` 分别为内部采集和导出节点数，`output_bytes` 仅为 elements JSON 的 UTF-8 字节数。客户端展示截断应另行记录，不能混同这两种服务端限制。输出减小不代表截图成本消失。
 
@@ -175,8 +179,8 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 若截图显示输入区域、但当前树没有可编辑节点，应使用当前截图映射坐标显式聚焦，再用新观察确认编辑能力。示例坐标和节点 ID 必须替换成现场观察结果：
 
-1. `observe {"mode":"both","compact":false,"include_details":true}`，保存聚焦前的完整有界树与截图。
-2. `tap {"request_id":"focus-001","observation_id":"BEFORE_ID","x":320,"y":240,"observe_after":true,"observation_options":{"mode":"both","compact":false,"wait_until":{"element":{"view_id":"com.example.shop:id/search","editable":true,"enabled":true,"action":"set_text"}},"timeout_ms":5000}}`。
+1. `observe {"mode":"both","output":"legacy","compact":false,"include_details":true}`，保存聚焦前的完整有界树与截图。
+2. `tap {"request_id":"focus-001","observation_id":"BEFORE_ID","x":320,"y":240,"observe_after":true,"observation_options":{"mode":"both","output":"legacy","compact":false,"wait_until":{"element":{"view_id":"com.example.shop:id/search","editable":true,"enabled":true,"action":"set_text"}},"timeout_ms":5000}}`。
 3. 仅当新观察的 condition 为 satisfied，且树确认唯一节点可编辑并支持 set_text 时，调用 `input_text {"request_id":"type-001","observation_id":"AFTER_ID","element_id":"AFTER_ELEMENT_ID","text":"搜索词","mode":"replace"}`。
 
 聚焦前后分别保存树，不能仅凭外观推断编辑能力。条件超时或编辑节点仍不明确时，独立 observe 后重新决策；不重放聚焦动作，也不自动改写为坐标输入。
@@ -189,15 +193,16 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
-动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察为 not_requested。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
+普通动作默认只执行一次并返回执行事实，不固定延时、不采集动作后树或截图；观察缺省是正常成功结果。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+
+动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
 
 ```json
 {
   "state":"executed",
   "action_executed":true,
   "request_id":"tap-001",
-  "execution":{"confirmation":"android_accepted","business_success":null},
-  "observation":{}
+  "execution":{"confirmation":"android_accepted","business_success":null}
 }
 ```
 
@@ -210,11 +215,7 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 `recovery` 是有限类别的建议对象，包含 category、advisory:true、replay_action:false、suggested_tool 和 message，不保证下一次操作成功。排队/执行中使用 wait_original_request；unknown 使用 reconcile_result；终态未执行的目标错误、执行后观察失败或条件超时使用 refresh_observation。先区分请求是否终止，再决定观察或查询原请求；不根据 action_executed:false 单独创建替代动作。恢复观察位于 recovery_observation，失败可再嵌套 last_observation。CLI/Web 递归识别这些层级，截图附件标明来源，历史截图不改变当前条件或错误。
 
-`target_occluded` 的错误诊断提供目标边界和命中的高层窗口信息。几何候选区域不等同于已验证的可操作区域，也不能证明同窗浮层不存在。节点滚动只在容器身份、布局、能力及事件证据允许时接受局部内容刷新；无法证明的重排、插入、移位、用户滚动等仍拒绝。坐标手势检查完整路径，服务不会自动换坐标目标或路径。
-
-文字刷新放行采用有意收窄的规则：变化必须仅为子节点文字，完整有界事件日志中的每次变化有对应来源，容器/祖先/布局/状态/能力均保持一致。变化行须有 collectionItemInfo、provider uniqueId、唯一且不变的内容锚，并由节点提供者在 `AccessibilityNodeInfo.extras["ai.nidhoggfgg.phoneuse.logical_item_id"]` 中明确提供非空、最多 256 字符、随业务条目移动而非固定槽位的稳定逻辑 ID。ID 在前后容器中均须唯一且相同。普通第三方应用若没有该证据，文字刷新仍会被拒绝；固定行号、资源 ID 或 widget uniqueId 本身不能证明没有条目重绑。此约定不是客户端跳过校验的参数。
-
-独立窗口诊断包括 window_id、type、layer、bounds、touchable_region、overlap 和阻挡原因。输入区域与视觉可见性分别表述。语义滚动的部分覆盖例外目前只接受 Android 明确标记为 PiP 的非聚焦应用窗口，且底层仍活动和聚焦、交叠完整处于容器角落的三分之一区域；未知模态性的普通浮窗仍拒绝。点击/长按/输入不使用该例外。同窗重叠兄弟，以及语义滚动子树中的重叠分支会保守拒绝；检查有节点/比较预算且可取消。无障碍树未暴露的视觉遮罩无法由这些检查保证识别，诊断中的 visible_region_verified 始终不冒充视觉确认。
+窗口信息只作按需诊断（`diagnostics:true` 下的 windows），不要求活动应用覆盖全屏，也不需要客户端先选择输入法窗口。版本和事件历史用于解释变化，不是整页必须不变的前置条件。
 
 去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。
 

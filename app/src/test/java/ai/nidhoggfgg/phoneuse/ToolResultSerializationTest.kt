@@ -10,6 +10,18 @@ import org.junit.Test
 class ToolResultSerializationTest {
     private fun screenshot(data: String) = json("available" to true, "mime_type" to "image/png", "data_base64" to data)
 
+    @Test fun executedActionWithoutOptionalObservationIsSuccessfulTextOnly() {
+        val result = json("state" to "executed", "action_executed" to true, "request_id" to "once",
+            "execution" to json("confirmation" to "android_accepted"))
+        val mcp = serializeMcpToolResult(result)
+        assertFalse(mcp.getBoolean("isError"))
+        assertEquals(1, mcp.getJSONArray("content").length())
+        val text = JSONObject(mcp.getJSONArray("content").getJSONObject(0).getString("text"))
+        assertTrue(text.getBoolean("action_executed"))
+        assertFalse(text.has("observation"))
+        assertFalse(text.has("observation_status"))
+    }
+
     @Test fun nestedRecoveryAndRetainedObservationsHaveIdentityAndMcpImagesWithoutChangingCache() {
         val last = json("observation_id" to "old", "screenshot" to screenshot("original-frame"))
         val recovery = json("observation_status" to "failed", "last_observation" to last,

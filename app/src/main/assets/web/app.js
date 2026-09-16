@@ -95,7 +95,8 @@ function renderFields() {
         $('arguments').value = JSON.stringify(value, null, 2); input.setCustomValidity(''); notice(null);
       } catch { input.setCustomValidity('请输入有效的 ' + schema.type + ' 值，并检查 JSON 参数。'); }
     };
-    const help = document.createElement('small'); help.textContent = schema.description || schema.type;
+    const help = document.createElement('small'); help.textContent = (schema.description || schema.type) +
+      (schema.default === undefined ? '' : `（默认：${schema.default}）`);
     wrapper.append(label, input, help); return wrapper;
   }));
   $('no-fields').hidden = fields.length !== 0;

@@ -4,7 +4,8 @@
 
 ## 已实现
 
-- 默认精简无障碍树、按需完整树/JPEG 截图、有上限的稳定重采，以及目标/容器/窗口校验。
+- 默认立即观察、decision 精简节点、按需完整树/JPEG 截图及有界重采；节点只核验所选目标，坐标支持键盘和系统界面。
+- 动作默认只执行一次，等待和观察由 AI 自行组合；observe_after 为显式可选项。
 - 节点或坐标点击、长按、路径滑动、滚动、中文文本替换/插入、返回/主页/最近任务、打开应用。
 - 授权客户端共用串行队列、取消、请求去重、未知结果查询。
 - HTTP 直连 JSON API、MCP Streamable HTTP，以及 Python MCP stdio 桥接。
@@ -67,12 +68,12 @@ python tools/phoneuse_client.py call observe '{"mode":"tree"}' --device-id DEVIC
 
 `pair` 首次显示核对码并等待手机批准，之后重复执行只检查已保存的连接，不会重复配对。等待中的请求也会保存，客户端重开可继续领取。旧版配置若未保存安装级 device_id，首次升级需要重新在手机批准，避免仅按地址复用授权。新配对完成后恢复自动连接。
 
-CLI 默认从 JSON 中省略截图 base64，保留尺寸及坐标映射；`--screenshot-out` 保存图片，`--include-image-data` 可显式保留 base64。MCP 仍以图片内容块返回截图。精简树默认省略 enabled:true、visible:true 和为 false 的状态字段，完整树使用 `compact:false` 或 CLI 的 `--full-tree`。
+CLI 默认从 JSON 中省略截图 base64，保留尺寸及坐标映射；`--screenshot-out` 保存图片，`--include-image-data` 可显式保留 base64。MCP 仍以图片内容块返回截图。精简树默认省略 enabled:true、visible:true 和为 false 的状态字段，完整树使用 `output:"legacy",compact:false` 或 CLI 的 `--full-tree`。
 
 执行动作示例：
 
 ```sh
-python tools/phoneuse_client.py call home '{"request_id":"home-001","observe_after":true}' --device-id DEVICE_ID
+python tools/phoneuse_client.py call home '{"request_id":"home-001"}' --device-id DEVICE_ID
 python tools/phoneuse_client.py call get_status '{"request_id":"home-001"}' --device-id DEVICE_ID
 ```
 
@@ -107,4 +108,4 @@ AI 推荐使用 stdio 桥接，只配置手机地址，无需预先配对或填�
 - [实机验收清单](docs/validation.md)
 - `DeviceControllerTest` 覆盖授权、串行队列、去重、未知结果、取消/暂停、凭证撤销与参数校验。
 
-截图与界面树不是原子采集；实现会拒绝检测到的变化，但不能保证动态界面绝对不变。节点返回成功仅代表 Android 接受操作，手势返回完成也不等于业务成功。实际输入兼容性、受保护窗口和厂商后台限制需要实机验证。
+截图与界面树不是原子采集；实现对明确的窗口/页面及显示变化有限重采，不把普通刷新视为整份观察失效。节点返回成功仅代表 Android 接受操作，手势返回完成也不等于业务成功。实际输入兼容性、受保护窗口和厂商后台限制需要实机验证。
