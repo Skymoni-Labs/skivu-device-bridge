@@ -1,10 +1,12 @@
-# MVP API 协议 v0.3
+# MVP API 协议 v0.4
 
 ## 接入与身份
 
 监听 IPv4 `0.0.0.0:8443`，使用明文 HTTP，不生成证书、不要求指纹校验。端口沿用 8443，所有入口改用 `http://`。配对授权、Bearer token 和撤销机制保留。
 
 ### 配对请求 → 手机批准 → 领取凭证
+
+以下是原生客户端内部协议。AI 使用 MCP stdio 的 `phoneuse_connect`，无需直接处理领取秘密或 token。已完成的授权无会话期限，App/服务重启后仍有效；关闭连接不解除配对。
 
 旧的 `POST /pair` 和配对码输入流程已移除；已有客户端凭证仍有效。
 
@@ -31,13 +33,25 @@
 
 `GET /` 是不含凭证和设备数据的公开页面，允许从 App/其他页面跳转（包括 `Sec-Fetch-Site: cross-site`），仍校验 Host；脚本、配对和 API 请求继续使用同源策略。页面禁止被嵌入 frame。
 
-`GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需 Bearer token，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
+`GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 端点必须提供 `Authorization: Bearer TOKEN`。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `http://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `http://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
 
-Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `url/token/client_id`，可直接交给 Python 客户端和 MCP stdio 桥接。退出网页仅清除本页凭证，撤销授权需在手机执行。
+浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，请求参数与原生配对接口一致。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。当前使用 HTTP，因此不设置 Secure。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 
-每个连接只处理一个 HTTP 请求并关闭；不会因为 HTTP 响应完成而撤销租约。连接池和等待队列有上限。
+- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权并续期/清除 Cookie，不签发新身份。
+- `POST /browser/session`：携带已有 Bearer 或 Cookie，正文 `{}`，换成同一身份的持久 Cookie。用于旧版打开标签页的自动迁移，成功后删除 sessionStorage 中的旧 token。
+- `POST /browser/forget`：需认证，正文 `{}`；撤销该客户端、清除 Cookie 与配对暂存响应，使排队动作失效。关闭页面本身不调用此接口。
+
+页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧导出配置仍可由 Python 使用。
+
+### AI 的持久连接
+
+`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` 在未配对或手机离线时也可处理 initialize。`phoneuse_connect` 首次创建请求，后续调用查询同一请求；只暴露 `status/verification_code/poll_interval/message`。批准后桥接原子保存凭证，发布工具列表变化通知。再次启动从同一配置恢复，不再请求配对。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供所有手机工具。
+
+配置默认位于用户目录 `.phoneuse.json`，由桥接读写，不加入 MCP 返回；未完成配对也保存到该文件以便桥接重启后继续。401 清除已撤销凭证并提示显式调用连接工具；网络错误不删除凭证、不发起配对、不重放动作。手机仍未恢复时初始化与连接工具可用。此机制不隔离与桥接使用同一系统账户的文件访问权限。
+
+每个连接只处理一个 HTTP 请求并关闭；HTTP 连接关闭不影响配对授权。连接池和等待队列有上限。
 
 ## 普通 API
 
@@ -52,10 +66,8 @@ Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `ur
 | 工具 | 参数 |
 | --- | --- |
 | get_capabilities | 无 |
-| get_status | 可选 request_id，只能查询本客户端结果；lease_id 仅返回给当前控制者 |
-| acquire_control | ttl_seconds：5–300，默认 60；续租必须提供当前 lease_id |
-| release_control | lease_id；撤销当前租约及排队输入 |
-| cancel | lease_id；可选 request_id，不传则取消本客户端所有未完成输入 |
+| get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
+| cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
 | observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280 |
 | list_apps | 无；仅列出系统允许发现且带启动入口的应用 |
 | wait_for_change | ui_version；timeout_ms：1–10000，默认 5000 |
@@ -69,7 +81,7 @@ Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `ur
 
 ### 动作公共字段
 
-所有 `tap` 至 `launch_app` 输入动作必填 `lease_id`、`request_id`。`request_id` 最多 128 字符。可选：
+所有 `tap` 至 `launch_app` 输入动作必填 `request_id`。`request_id` 最多 128 字符。可选：
 
 - `observation_id`：用于检查界面是否过期；指定元素时必填。
 - `expected_window_id`：预期的活动窗口。
@@ -96,11 +108,11 @@ Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `ur
 
 界面事件异步到达，以上检查不能消除所有竞争条件。屏幕内容可在最终检查与系统动作之间变化。
 
-## 执行、租约与去重
+## 授权、执行与去重
 
-同一时刻一个客户端持有输入租约；动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
+配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
 
-租约采用单调时钟，5–300 秒；请求本身不会自动续租。相同客户端续期必须提交 lease_id，已过期的 ID 不能复活。进程和服务重启不恢复租约、不重放请求。
+授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
 动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。终态：
 
@@ -124,11 +136,11 @@ Web 凭证只保存在当前标签页 sessionStorage；导出的 JSON 包含 `ur
 
 重发相同 ID 返回已有结果，不再次输入；不同参数返回 REQUEST_ID_CONFLICT。十分钟之后或进程重启后不能依据去重保证安全重放。客户端必须自行保留不确定请求，并重新观察。
 
-通知“断开”撤销当前租约，已配对凭证仍可重新申请租约；要禁止某客户端再次连接，请撤销它的凭证。“暂停”撤销当前租约及排队输入，需要手机端恢复后重新申请。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
+通知提供暂停/恢复和停止服务。暂停使排队输入失效，恢复不会重放已取消动作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
 
 ## 主要错误码
 
-INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、CONTROL_BUSY、LEASE_EXPIRED、PAUSED、STOPPED、CANCELLED、BUSY、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。
+INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。
 
 ## MCP
 

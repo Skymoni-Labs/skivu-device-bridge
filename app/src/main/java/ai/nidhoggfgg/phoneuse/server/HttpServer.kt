@@ -50,7 +50,10 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         deadlines.shutdownNow()
     }
     private data class Response(val status: Int, val body: JSONObject? = null,
-        val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST")
+        val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST",
+        val cookie: String? = null)
+    private fun cookie(token: String, port: Int) =
+        "phoneuse_client_$port=$token; Path=/; HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
     private class HttpError(val status: Int, message: String) : RuntimeException(message)
     private fun handle(socket: Socket) {
         try {
@@ -94,12 +97,21 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 write(socket, Response(200, text = assets.open("web/$file").bufferedReader().use { it.readText() }, contentType = type))
                 return
             }
-            if (path !in setOf("/pair/request", "/pair/status", "/api", "/api/tools", "/mcp")) throw HttpError(404, "Unknown endpoint")
-            val client = if (!path.startsWith("/pair/")) {
-                val auth = headers["authorization"] ?: throw HttpError(401, "Bearer token required")
-                if (!auth.startsWith("Bearer ")) throw HttpError(401, "Bearer token required")
-                identities.authenticate(auth.removePrefix("Bearer ")) ?: throw HttpError(401, "Invalid or revoked token")
-            } else null
+            val pairingPath = path.removePrefix("/browser")
+            val isPairing = pairingPath in setOf("/pair/request", "/pair/status")
+            if (!isPairing && path !in setOf("/api", "/api/tools", "/mcp", "/browser/session", "/browser/forget"))
+                throw HttpError(404, "Unknown endpoint")
+            val cookieToken = headers["cookie"]?.split(';')?.map { it.trim() }
+                ?.singleOrNull { it.startsWith("phoneuse_client_${socket.localPort}=") }?.substringAfter('=')
+            val auth = headers["authorization"]
+            val token = if (auth != null) auth.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ") else cookieToken
+            val client = if (isPairing) null else token?.let(identities::authenticate)
+            if (path == "/browser/session" && request[0] == "GET") {
+                write(socket, Response(200, json("paired" to (client != null), "client_id" to client),
+                    cookie = cookie(if (client != null) token!! else "", socket.localPort)))
+                return
+            }
+            if (!isPairing && client == null) throw HttpError(401, "Invalid or missing client authorization")
             if (request[0] == "GET" && path == "/api/tools") {
                 write(socket, Response(200, json("tools" to ToolCatalog.all())))
                 return
@@ -147,13 +159,28 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 } else when (char) { '"' -> quoted = true; '{', '[' -> { if (++depth > 64) throw HttpError(400, "JSON nesting too deep") }; '}', ']' -> depth-- }
             }
             val payload = try { JSONObject(raw) } catch (_: Exception) { throw HttpError(400, "Invalid JSON object") }
-            val response = if (path.startsWith("/pair/")) {
+            val response = if (isPairing) {
                 try {
-                    if (path == "/pair/request") Response(202, identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty()))
-                    else Response(200, identities.pairing.poll(payload.string("pairing_id", 80), payload.string("pairing_secret", 128)))
+                    if (pairingPath == "/pair/request") Response(202, identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty()))
+                    else {
+                        val result = identities.pairing.poll(payload.string("pairing_id", 80), payload.string("pairing_secret", 128))
+                        if (path.startsWith("/browser/") && result.optString("status") == "approved") {
+                            val browserToken = result.remove("token") as String
+                            result.remove("token_type")
+                            Response(200, result, cookie = cookie(browserToken, socket.localPort))
+                        } else Response(200, result)
+                    }
                 } catch (e: DeviceError) {
                     Response(if (e.code == "PAIRING_BUSY") 429 else 400, errorResult(e))
                 }
+            } else if (path == "/browser/session") {
+                // Migrate a previously saved browser Bearer credential without pairing again.
+                Response(200, json("paired" to true, "client_id" to client), cookie = cookie(token!!, socket.localPort))
+            } else if (path == "/browser/forget") {
+                identities.revoke(client!!)
+                identities.pairing.revoked(client)
+                controller.revokeClient(client)
+                Response(200, json("paired" to false), cookie = cookie("", socket.localPort))
             } else {
                 connected(client!!)
                 if (path == "/mcp") mcp(client, payload)
@@ -189,7 +216,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             "initialize" -> json("protocolVersion" to params.optString("protocolVersion").takeIf { it in versions }.orEmpty().ifEmpty { "2025-11-25" },
                 "capabilities" to json("tools" to json("listChanged" to false)),
                 "serverInfo" to json("name" to "phone-use", "version" to "0.1.0"),
-                "instructions" to "Acquire a lease before actions. Always supply a unique request_id. Read tool results; Android acceptance is not business success.")
+                "instructions" to "Paired clients can call actions directly. Always supply a unique request_id. Read tool results; Android acceptance is not business success.")
             "ping" -> JSONObject()
             "tools/list" -> json("tools" to ToolCatalog.all())
             "tools/call" -> {
@@ -218,7 +245,8 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         val reason = when (response.status) { 200 -> "OK"; 202 -> "Accepted"; 401 -> "Unauthorized"; 403 -> "Forbidden"; 404 -> "Not Found"; 405 -> "Method Not Allowed"; else -> "Error" }
         val headers = "HTTP/1.1 ${response.status} $reason\r\nContent-Type: ${response.contentType}\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n" +
             "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\nReferrer-Policy: no-referrer\r\n" +
-            (if (response.status == 405) "Allow: ${response.allow}\r\n" else "") + "\r\n"
+            (if (response.status == 405) "Allow: ${response.allow}\r\n" else "") +
+            (response.cookie?.let { "Set-Cookie: $it\r\n" } ?: "") + "\r\n"
         socket.outputStream.write(headers.toByteArray(Charsets.US_ASCII))
         socket.outputStream.write(bytes); socket.outputStream.flush()
     }

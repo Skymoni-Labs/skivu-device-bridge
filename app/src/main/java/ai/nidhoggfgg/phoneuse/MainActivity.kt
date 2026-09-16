@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent { PhoneUseTheme { Dashboard() } }
+        if (getSharedPreferences("service_state", MODE_PRIVATE).getBoolean("enabled", false)) startEndpoint()
     }
     private fun startEndpoint() {
         val permissions = mutableListOf<String>()
@@ -65,7 +66,7 @@ class MainActivity : ComponentActivity() {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(service?.stateText() ?: "服务未启动", style = MaterialTheme.typography.titleMedium)
                         Text(if (accessibility) "无障碍服务已授权" else "无障碍未开启；可先配对和调试 API，设备操作需授权无障碍。")
-                        Text("操作时请保持亮屏并解锁。可随时通过通知栏暂停、断开或停止。")
+                        Text("操作时请保持亮屏并解锁。可随时通过通知栏暂停或停止。")
                     }
                 }
                 Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("无障碍设置") }
@@ -74,16 +75,16 @@ class MainActivity : ComponentActivity() {
                     PhoneUseService.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(onClick = { if (service.controller.gate.paused) service.controller.resume() else service.controller.pause(); tick++ }) {
+                        Button(onClick = { service.setPaused(!service.controller.gate.paused); tick++ }) {
                             Text(if (service.controller.gate.paused) "恢复控制" else "暂停控制")
                         }
-                        OutlinedButton(onClick = { stopService(Intent(this@MainActivity, PhoneUseService::class.java)); tick++ }) { Text("停止服务") }
+                        OutlinedButton(onClick = { service.stopEndpoint(); tick++ }) { Text("停止服务") }
                     }
-                    OutlinedButton(onClick = { service.controller.revoke(); tick++ }) { Text("撤销当前控制权") }
                     HorizontalDivider()
                     Text("连接与配对", style = MaterialTheme.typography.titleLarge)
                     SelectionContainer { Text((addresses + "127.0.0.1").joinToString("\n") { "http://$it:8443" } + "\nAPI: /api · MCP: /mcp") }
                     Text("在电脑浏览器打开上方地址即可使用 Web 控制台。从网页或客户端发起配对请求，然后在这里授权。")
+                    Text("每个客户端只需配对一次。重启 App 后自动恢复已启用的服务；暂停状态和配对记录都会保留。")
                     OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("http://127.0.0.1:8443/"))) }) { Text("打开 Web 控制台") }
                     Text("配对请求", style = MaterialTheme.typography.titleMedium)
                     val pending = service.identities.pairing.pending()
@@ -95,7 +96,7 @@ class MainActivity : ComponentActivity() {
                                 Text(request.name, style = MaterialTheme.typography.titleMedium)
                                 Text("来源：${request.source} · 名称由客户端提供")
                                 Text("核对码：${request.verificationCode}", style = MaterialTheme.typography.headlineSmall)
-                                Text("请与客户端核对。授权后可读取屏幕及控制手机，直到撤销凭证。")
+                                Text("请与客户端核对。授权后长期记住此客户端，重启无需重新配对，可随时撤销。")
                                 Text("剩余 ${((request.deadline - android.os.SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)} 秒")
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = {
@@ -113,7 +114,7 @@ class MainActivity : ComponentActivity() {
                     clients.forEach { (id, name) ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(name, Modifier.weight(1f).padding(top = 12.dp))
-                            TextButton(onClick = { service.revokeClient(id); tick++ }) { Text("撤销凭证") }
+                            TextButton(onClick = { service.revokeClient(id); tick++ }) { Text("解除配对") }
                         }
                     }
                 }

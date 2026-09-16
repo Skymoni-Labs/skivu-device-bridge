@@ -34,6 +34,8 @@ class IdentityStore(context: Context) {
     @Synchronized fun exists(id: String): Boolean = preferences.contains(id)
     @Synchronized fun clients(): List<Pair<String, String>> = preferences.all.values.mapNotNull { it as? String }
         .map { JSONObject(it) }.map { it.getString("id") to it.getString("name") }
-    @Synchronized fun revoke(id: String) { preferences.edit().remove(id).commit() }
+    @Synchronized fun revoke(id: String) {
+        if (!preferences.edit().remove(id).commit()) fail("STORAGE_ERROR", "Could not revoke client")
+    }
     private fun hash(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }

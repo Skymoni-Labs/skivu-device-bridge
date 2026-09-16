@@ -13,7 +13,7 @@ class DeviceController(
     private val authorized: (String) -> Boolean,
     private val changed: () -> Unit = {}
 ) {
-    val gate = ControlGate(clock)
+    val gate = ControlGate()
     private val executor = ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, LinkedBlockingQueue(32))
     private data class Request(val client: String, val id: String, val signature: String, val created: Long,
         val result: CompletableFuture<JSONObject> = CompletableFuture(),
@@ -30,16 +30,12 @@ class DeviceController(
             return when (name) {
                 "get_capabilities" -> backend.capabilities()
                 "get_status" -> status(client, args.optString("request_id"))
-                "acquire_control" -> {
-                    val lease = gate.acquire(client, args.integer("ttl_seconds", 60, 5, 300),
-                        if (args.has("lease_id")) args.string("lease_id") else null)
-                    changed()
-                    json("lease_id" to lease.id, "expires_in_ms" to gate.remaining())
-                }
-                "release_control" -> { gate.release(client, args.string("lease_id")); cancelPending(); changed(); json("released" to true) }
                 "cancel" -> cancel(client, args)
                 "observe", "list_apps" -> serialRead(client, name, args)
-                "wait_for_change" -> backend.waitForChange(args) { checkAccess(client); if (gate.paused) fail("CANCELLED", "Control paused") }
+                "wait_for_change" -> {
+                    val generation = gate.generation
+                    backend.waitForChange(args) { checkAccess(client); gate.check(generation) }
+                }
                 in actionNames -> action(client, name, args)
                 else -> fail("UNKNOWN_TOOL", "Unknown tool: $name")
             }
@@ -70,7 +66,6 @@ class DeviceController(
     }
     private fun action(client: String, name: String, args: JSONObject): JSONObject {
         val id = args.string("request_id", 128)
-        val lease = args.string("lease_id")
         val key = "$client:$id"
         val signature = name + canonical(args)
         val request: Request
@@ -81,13 +76,13 @@ class DeviceController(
                 if (old.signature != signature) fail("REQUEST_ID_CONFLICT", "Request ID was used with different arguments")
                 request = old
             } else {
-                gate.check(client, lease)
                 if (requests.size >= 256 || requests.values.sumOf { it.retainedChars.toLong() } >= 8_000_000)
                     fail("BUSY", "Deduplication cache full; retry later")
                 val generation = gate.generation
+                gate.check(generation)
                 request = Request(client, id, signature, clock())
                 requests[key] = request
-                try { executor.execute { execute(request, name, args, lease, generation) } }
+                try { executor.execute { execute(request, name, args, generation) } }
                 catch (_: java.util.concurrent.RejectedExecutionException) {
                     request.result.complete(errorResult(DeviceError("BUSY", "Device queue is full")))
                 }
@@ -97,11 +92,11 @@ class DeviceController(
             json("state" to request.phase, "request_id" to id, "message" to "Still pending; query get_status with this request_id. Do not replay with a new ID.")
         }
     }
-    private fun execute(request: Request, name: String, args: JSONObject, lease: String, generation: Long) {
+    private fun execute(request: Request, name: String, args: JSONObject, generation: Long) {
         if (request.result.isDone) return
         val check = {
             checkAccess(request.client)
-            gate.check(request.client, lease, generation)
+            gate.check(generation)
             if (request.cancelled) fail("CANCELLED", "Request cancelled")
         }
         try {
@@ -121,7 +116,7 @@ class DeviceController(
             request.result.complete(result)
         } catch (e: Exception) {
             val state = when ((e as? DeviceError)?.code) {
-                "CANCELLED", "LEASE_EXPIRED", "UNAUTHORIZED", "STOPPED" -> "cancelled"
+                "CANCELLED", "UNAUTHORIZED", "STOPPED" -> "cancelled"
                 "RESULT_UNKNOWN" -> "unknown"
                 else -> if (e is DeviceError) "failed" else "unknown"
             }
@@ -129,31 +124,22 @@ class DeviceController(
         } finally { active = null }
     }
     private fun cancel(client: String, args: JSONObject): JSONObject {
-        gate.check(client, args.string("lease_id"))
         val id = args.optString("request_id")
-        synchronized(requests) {
-            requests.values.filter { it.client == client && (id.isEmpty() || it.id == id) && !it.result.isDone }.forEach {
-                it.cancelled = true
-                if (it.phase == "accepted") it.result.complete(errorResult(DeviceError("CANCELLED", "Cancelled before execution"), "cancelled"))
-            }
-        }
+        cancelPending(client, id.takeIf { it.isNotEmpty() })
         return json("state" to "cancel_requested", "in_flight_may_complete" to (active?.client == client))
     }
-    private fun cancelPending() { synchronized(requests) {
-        requests.values.filter { !it.result.isDone }.forEach {
+    private fun cancelPending(client: String? = null, id: String? = null) { synchronized(requests) {
+        requests.values.filter { !it.result.isDone && (client == null || it.client == client) && (id == null || it.id == id) }.forEach {
             it.cancelled = true
-            if (it.phase == "accepted") it.result.complete(errorResult(DeviceError("CANCELLED", "Control invalidated"), "cancelled"))
+            if (it.phase == "accepted") it.result.complete(errorResult(DeviceError("CANCELLED", "Request cancelled before execution"), "cancelled"))
         }
     } }
     fun pause() { gate.pause(); cancelPending(); changed() }
     fun resume() { gate.resume(); changed() }
-    fun revoke() { gate.revoke(); cancelPending(); changed() }
+    fun revokeClient(client: String) { cancelPending(client); changed() }
     fun stop() { gate.stop(); cancelPending(); executor.shutdown(); changed() }
     fun status(client: String, id: String = ""): JSONObject {
-        val lease = gate.current()
         val result = json("paused" to gate.paused, "stopped" to gate.stopped,
-            "control_owner" to lease?.client, "lease_id" to lease?.takeIf { it.client == client }?.id,
-            "expires_in_ms" to gate.remaining(),
             "executing_request_id" to active?.takeIf { it.client == client }?.id)
         if (id.isNotEmpty()) synchronized(requests) {
             val request = requests["$client:$id"] ?: fail("REQUEST_NOT_FOUND", "No retained request with this ID")

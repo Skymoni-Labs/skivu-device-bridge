@@ -46,7 +46,6 @@ object ToolCatalog {
     private fun integer(description: String) = json("type" to "integer", "description" to description)
     private val common = mapOf(
         "request_id" to string("Unique action ID, retained for 10 minutes per client; reuse exactly on retransmission"),
-        "lease_id" to string("Current control lease"),
         "observation_id" to string("Observation used to select the target; required with element_id"),
         "expected_window_id" to integer("Reject a different active window"),
         "observe_after" to json("type" to "boolean", "description" to "Attach observation after action")
@@ -58,15 +57,13 @@ object ToolCatalog {
         if (action) common.forEach { (key, value) -> properties.put(key, value) }
         fields.forEach { (key, value) -> properties.put(key, value) }
         return json("name" to name, "description" to description, "inputSchema" to json("type" to "object",
-            "properties" to properties, "required" to JSONArray((if (action) listOf("request_id", "lease_id") else emptyList()) + required),
+            "properties" to properties, "required" to JSONArray((if (action) listOf("request_id") else emptyList()) + required),
             "additionalProperties" to false))
     }
     fun all(): JSONArray = JSONArray(listOf(
         tool("get_capabilities", "Read Android capability availability and limitations"),
         tool("get_status", "Read control state or the retained result of an action", mapOf("request_id" to string("Optional action to query"))),
-        tool("acquire_control", "Acquire exclusive control or renew the supplied active lease", mapOf("ttl_seconds" to integer("5..300, default 60"), "lease_id" to string("Only supply for renewal"))),
-        tool("release_control", "Revoke the lease and queued actions", mapOf("lease_id" to string("Active lease")), listOf("lease_id")),
-        tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("lease_id" to string("Active lease"), "request_id" to string("Omit to cancel all pending actions")), listOf("lease_id")),
+        tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("request_id" to string("Omit to cancel all pending actions for this client"))),
         tool("observe", "Collect a fresh snapshot; screenshots and tree are not atomic", mapOf("mode" to string("tree, screenshot, or both (default)"), "max_dimension" to integer("Screenshot longest side 320..2048, default 1280"))),
         tool("list_apps", "List discoverable launchable applications"),
         tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),

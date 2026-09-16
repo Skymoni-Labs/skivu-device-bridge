@@ -21,6 +21,7 @@ class PhoneUseService : Service() {
         private set
     private var server: HttpServer? = null
     private var starting = false
+    private val settings by lazy { getSharedPreferences("service_state", MODE_PRIVATE) }
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var lastClient: String? = null
     @Volatile private var lastContact = 0L
@@ -38,13 +39,25 @@ class PhoneUseService : Service() {
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            PAUSE -> if (::controller.isInitialized) controller.pause()
-            RESUME -> if (::controller.isInitialized) controller.resume()
-            DISCONNECT -> if (::controller.isInitialized) { controller.revoke(); lastClient = null; updateNotification() }
-            STOP -> stopSelf()
-            else -> if (server == null && !starting) startEndpoint()
+            PAUSE -> setPaused(true)
+            RESUME -> setPaused(false)
+            STOP -> stopEndpoint()
+            else -> {
+                settings.edit().putBoolean("enabled", true).apply()
+                if (server == null && !starting) startEndpoint()
+            }
         }
-        return START_NOT_STICKY
+        return if (settings.getBoolean("enabled", false)) START_STICKY else START_NOT_STICKY
+    }
+    fun setPaused(paused: Boolean) {
+        settings.edit().putBoolean("paused", paused).apply()
+        if (::controller.isInitialized) {
+            if (paused) controller.pause() else controller.resume()
+        }
+    }
+    fun stopEndpoint() {
+        settings.edit().putBoolean("enabled", false).apply()
+        stopSelf()
     }
     private fun startEndpoint() {
         starting = true
@@ -57,6 +70,7 @@ class PhoneUseService : Service() {
                     controller = DeviceController(AndroidBackend(this), SystemClock::elapsedRealtime, identities::exists) {
                         handler.post { if (!destroyed) updateNotification() }
                     }
+                    if (settings.getBoolean("paused", false)) controller.pause()
                     try {
                         server = HttpServer(identities, controller, assets) { client ->
                             lastClient = client; lastContact = SystemClock.elapsedRealtime()
@@ -77,18 +91,16 @@ class PhoneUseService : Service() {
     fun revokeClient(id: String) {
         identities.revoke(id)
         identities.pairing.revoked(id)
-        if (controller.gate.current()?.client == id) controller.revoke()
+        controller.revokeClient(id)
         if (lastClient == id) lastClient = null
         updateNotification()
     }
     fun stateText(): String {
         if (!::controller.isInitialized) return "服务正在启动"
-        val lease = controller.gate.current()
         return when {
             identities.pairing.pending().isNotEmpty() -> "收到配对请求 · 点击打开 App 授权"
             controller.gate.paused -> "控制已暂停"
-            lease != null -> "手机正在被控制 · ${identities.clients().find { it.first == lease.client }?.second ?: "客户端"}"
-            lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> "客户端最近已连接，等待控制"
+            lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> "客户端最近有请求 · 服务可用"
             else -> "服务可用，等待连接"
         }
     }
@@ -106,7 +118,7 @@ class PhoneUseService : Service() {
             .setContentTitle("Phone Use").setContentText(text).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(0, if (paused) "恢复" else "暂停", action(if (paused) RESUME else PAUSE, 1))
-            .addAction(0, "断开", action(DISCONNECT, 2)).addAction(0, "停止服务", action(STOP, 3)).build()
+            .addAction(0, "停止服务", action(STOP, 3)).build()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
@@ -123,7 +135,6 @@ class PhoneUseService : Service() {
         const val CHANNEL = "phone_use_control"
         const val PAUSE = "phoneuse.PAUSE"
         const val RESUME = "phoneuse.RESUME"
-        const val DISCONNECT = "phoneuse.DISCONNECT"
         const val STOP = "phoneuse.STOP"
         @Volatile var current: PhoneUseService? = null
             private set

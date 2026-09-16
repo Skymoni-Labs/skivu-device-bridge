@@ -18,20 +18,23 @@ import java.net.Socket
 class HttpServerInstrumentedTest {
     @Test fun httpServesWebPairingApiAndMcp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val identity = IdentityStore(context)
-        val controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
-        val server = HttpServer(identity, controller, context.assets) {}
-        fun request(path: String, body: JSONObject? = null, token: String? = null, site: String = "same-origin"): Pair<Int, String> {
+        var identity = IdentityStore(context)
+        var controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
+        var server = HttpServer(identity, controller, context.assets) {}
+        var responseHeaders = ""
+        fun request(path: String, body: JSONObject? = null, token: String? = null, site: String = "same-origin", cookie: String? = null): Pair<Int, String> {
             return Socket("127.0.0.1", 18443).use { socket ->
                 socket.soTimeout = 10_000
                 val bytes = body?.toString()?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
                 val header = "${if (body == null) "GET" else "POST"} $path HTTP/1.1\r\nHost: 127.0.0.1:18443\r\n" +
                     "Origin: http://127.0.0.1:18443\r\nSec-Fetch-Site: $site\r\nConnection: close\r\n" +
                     (token?.let { "Authorization: Bearer $it\r\n" } ?: "") +
+                    (cookie?.let { "Cookie: $it\r\n" } ?: "") +
                     (if (body != null) "Content-Type: application/json\r\nContent-Length: ${bytes.size}\r\n" else "") + "\r\n"
                 socket.outputStream.write(header.toByteArray(Charsets.US_ASCII))
                 socket.outputStream.write(bytes); socket.outputStream.flush()
                 val response = socket.inputStream.readBytes().toString(Charsets.UTF_8)
+                responseHeaders = response.substringBefore("\r\n\r\n")
                 response.substringBefore("\r\n").split(' ')[1].toInt() to response.substringAfter("\r\n\r\n")
             }
         }
@@ -58,6 +61,33 @@ class HttpServerInstrumentedTest {
             assertEquals(200, status.first); assertFalse(JSONObject(status.second).has("error"))
             val rpc = request("/mcp", json("jsonrpc" to "2.0", "id" to 1, "method" to "tools/list"), token)
             assertEquals(200, rpc.first); assertTrue(JSONObject(rpc.second).has("result"))
+            val browserPair = JSONObject(request("/browser/pair/status", args).second)
+            assertFalse(browserPair.has("token")); assertFalse(browserPair.has("token_type"))
+            val cookieHeader = responseHeaders.lineSequence().first { it.startsWith("Set-Cookie:") }.substringAfter(": ")
+            assertTrue(cookieHeader.contains("HttpOnly")); assertTrue(cookieHeader.contains("SameSite=Strict"))
+            assertTrue(cookieHeader.contains("Max-Age=34560000"))
+            val cookie = cookieHeader.substringBefore(';')
+            assertTrue(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
+            assertEquals(200, request("/api/tools", cookie = cookie).first)
+            assertEquals(403, request("/api", json("tool" to "get_status"), site = "cross-site", cookie = cookie).first)
+            // Recreate every service-owned object; completed pairing must outlive them all.
+            server.stop(); controller.stop(); identity.pairing.clear()
+            identity = IdentityStore(context)
+            controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
+            server = HttpServer(identity, controller, context.assets) {}
+            server.start(18443)
+            assertTrue(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
+            assertEquals(200, request("/api", json("tool" to "get_status"), cookie = cookie).first)
+            assertEquals(200, request("/api/tools", token = token).first)
+            // Existing Bearer tabs can migrate to a persistent cookie without a new request.
+            assertTrue(JSONObject(request("/browser/session", JSONObject(), token).second).getBoolean("paired"))
+            assertFalse(responseHeaders.isBlank())
+            assertEquals(200, request("/browser/forget", JSONObject(), cookie = cookie).first)
+            assertTrue(responseHeaders.contains("Max-Age=0"))
+            assertEquals(401, request("/api/tools", cookie = cookie).first)
+            assertEquals(401, request("/api/tools", token = token).first)
+            assertFalse(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
+            assertFalse(IdentityStore(context).exists(clientId))
         } finally {
             clientId?.let { identity.revoke(it) }
             identity.pairing.clear(); server.stop(); controller.stop()
