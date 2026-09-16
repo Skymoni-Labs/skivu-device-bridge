@@ -16,6 +16,8 @@ object ToolCatalog {
         }
         if (name == "scroll" && args.has("element_id") == args.has("region")) fail("INVALID_ARGUMENT", "Choose element_id OR region")
         if (args.has("element_id") && !args.has("observation_id")) fail("INVALID_ARGUMENT", "element_id requires observation_id")
+        if (name in setOf("tap", "long_press", "swipe", "scroll") && !args.has("observation_id"))
+            fail("INVALID_ARGUMENT", "Coordinate and node actions require observation_id")
     }
     private fun validateObject(value: JSONObject, schema: JSONObject, path: String) {
         val required = schema.optJSONArray("required") ?: JSONArray()
@@ -46,14 +48,18 @@ object ToolCatalog {
     private fun integer(description: String) = json("type" to "integer", "description" to description)
     private val common = mapOf(
         "request_id" to string("Unique action ID, retained for 10 minutes per client; reuse exactly on retransmission"),
-        "observation_id" to string("Observation used to select the target; required with element_id"),
+        "observation_id" to string("Observation used to select the target; required for node and coordinate actions"),
         "expected_window_id" to integer("Reject a different active window"),
-        "observe_after" to json("type" to "boolean", "description" to "Attach observation after action")
+        "observe_after" to json("type" to "boolean", "description" to "Attach observation after action; observation failure never replays the action"),
+        "lease_id" to string("Optional developer reservation; required while this device is reserved")
     )
     private val point = json("type" to "object", "properties" to json("x" to number("Display pixel x"), "y" to number("Display pixel y")),
         "required" to JSONArray(listOf("x", "y")), "additionalProperties" to false)
     private fun tool(name: String, description: String, fields: Map<String, JSONObject> = emptyMap(), required: List<String> = emptyList(), action: Boolean = false): JSONObject {
-        val properties = JSONObject()
+        val properties = json(
+            "device_id" to string("Optional direct-HTTP identity guard; required by the multi-device bridge"),
+            "service_instance_id" to string("Optional service instance guard from the last observation; checked before dispatch")
+        )
         if (action) common.forEach { (key, value) -> properties.put(key, value) }
         fields.forEach { (key, value) -> properties.put(key, value) }
         return json("name" to name, "description" to description, "inputSchema" to json("type" to "object",
@@ -64,14 +70,20 @@ object ToolCatalog {
         tool("get_capabilities", "Read Android capability availability and limitations"),
         tool("get_status", "Read control state or the retained result of an action", mapOf("request_id" to string("Optional action to query"))),
         tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("request_id" to string("Omit to cancel all pending actions for this client"))),
-        tool("observe", "Collect a fresh snapshot; screenshots and tree are not atomic", mapOf("mode" to string("tree, screenshot, or both (default)"), "max_dimension" to integer("Screenshot longest side 320..2048, default 1280"))),
+        tool("acquire_device", "Optionally reserve this device for a bounded test sequence; local pause and stop always override", mapOf("ttl_ms" to integer("1000..300000, default 60000"), "lease_id" to string("Current reservation ID to renew"))),
+        tool("release_device", "Release this client's developer reservation", mapOf("lease_id" to string("Reservation to release")), listOf("lease_id")),
+        tool("observe", "Collect a fresh snapshot with bounded stability waits; screenshots and tree are not atomic", mapOf(
+            "mode" to string("tree, screenshot, or both (default)"), "max_dimension" to integer("Screenshot longest side 320..2048, default 1280"),
+            "compact" to json("type" to "boolean", "description" to "Compact visible tree by default; false requests the full bounded tree"),
+            "stable_wait_ms" to integer("Maximum wait per attempt for a quiet target window, 0..2000, default 600"),
+            "max_attempts" to integer("Maximum observation collection attempts, 1..3, default 3"))),
         tool("list_apps", "List discoverable launchable applications"),
         tool("wait_for_change", "Wait for an accessibility UI version change; no semantic condition evaluation", mapOf("ui_version" to integer("Version from observe"), "timeout_ms" to integer("1..10000, default 5000")), listOf("ui_version")),
-        tool("tap", "Tap a snapshot element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), action = true),
-        tool("long_press", "Long press an element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y"), "duration_ms" to integer("500..5000 for coordinate gesture")), action = true),
-        tool("swipe", "Swipe along 2..64 physical display points", mapOf("points" to json("type" to "array", "items" to point, "minItems" to 2, "maxItems" to 64), "duration_ms" to integer("1..5000, default 600")), listOf("points"), true),
+        tool("tap", "Tap a snapshot element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y")), listOf("observation_id"), true),
+        tool("long_press", "Long press an element OR physical display coordinates", mapOf("element_id" to string("Snapshot element"), "x" to number("Display x"), "y" to number("Display y"), "duration_ms" to integer("500..5000 for coordinate gesture")), listOf("observation_id"), true),
+        tool("swipe", "Swipe along 2..64 physical display points", mapOf("points" to json("type" to "array", "items" to point, "minItems" to 2, "maxItems" to 64), "duration_ms" to integer("1..5000, default 600")), listOf("observation_id", "points"), true),
         tool("scroll", "Scroll a node forward/backward or a rectangular screen region up/down/left/right", mapOf("element_id" to string("Snapshot container"), "direction" to string("forward, backward, up, down, left, right"),
-            "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("direction"), true),
+            "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("observation_id", "direction"), true),
         tool("input_text", "Replace all text or insert at the reported selection. Insert requires readable text and replaces any selected range", mapOf("element_id" to string("Editable element"), "text" to string("Text, may be empty; max 10000 characters"), "mode" to string("replace or insert")), listOf("observation_id", "element_id", "text", "mode"), true),
         tool("back", "Android Back", action = true), tool("home", "Android Home", action = true), tool("recents", "Android Recents", action = true),
         tool("launch_app", "Launch a discoverable package with an Android Intent", mapOf("package_name" to string("Android package")), listOf("package_name"), true)

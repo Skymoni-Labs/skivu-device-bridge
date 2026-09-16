@@ -47,7 +47,11 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 ### AI 的持久连接
 
-`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` 在未配对或手机离线时也可处理 initialize。`phoneuse_connect` 首次创建请求，后续调用查询同一请求；只暴露 `status/verification_code/poll_interval/message`。批准后桥接原子保存凭证，发布工具列表变化通知。再次启动从同一配置恢复，不再请求配对。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供所有手机工具。
+`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
+
+`GET /identity` 无需凭证，返回 `device_id/name/model/android_version/is_emulator/service_instance_id`。App 安装级 UUID 与地址分离，名称可在手机本地修改；身份与配对偏好设置排除备份/设备迁移。桥接在发送认证请求前先验证公开设备 ID，地址对应其他安装时不发送旧 token。换地址重连也必须匹配已保存身份。旧配置缺少可信设备 ID 时需要重新在手机批准，不能只凭 IP 迁移凭证。此预检用于防止意外连错设备；当前明文 HTTP 不提供对恶意网络端点的身份认证。
+
+配对请求/领取结果含设备身份；未完成请求也持久保存，批准后原子保存凭证。MCP 结果不返回 token 或领取秘密。不同设备独立连接、锁与执行队列，可并行；同设备调用串行。单台离线不阻塞其他设备。观察 ID 同时绑定客户端、设备服务运行实例及无障碍服务实例，跨设备、跨客户端及重启后的引用拒绝执行。
 
 配置默认位于用户目录 `.phoneuse.json`，由桥接读写，不加入 MCP 返回；未完成配对也保存到该文件以便桥接重启后继续。401 清除已撤销凭证并提示显式调用连接工具；网络错误不删除凭证、不发起配对、不重放动作。手机仍未恢复时初始化与连接工具可用。此机制不隔离与桥接使用同一系统账户的文件访问权限。
 
@@ -68,7 +72,9 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 | get_capabilities | 无 |
 | get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
 | cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
-| observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280 |
+| observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 600；max_attempts：1–3，默认 3 |
+| acquire_device | 可选 ttl_ms：1000–300000，默认 60000；续期必须携带当前 lease_id |
+| release_device | lease_id：释放本客户端的测试占用 |
 | list_apps | 无；仅列出系统允许发现且带启动入口的应用 |
 | wait_for_change | ui_version；timeout_ms：1–10000，默认 5000 |
 | tap | element_id，或 x/y |
@@ -83,9 +89,12 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 所有 `tap` 至 `launch_app` 输入动作必填 `request_id`。`request_id` 最多 128 字符。可选：
 
-- `observation_id`：用于检查界面是否过期；指定元素时必填。
+- `observation_id`：用于检查界面是否过期；节点及坐标动作（tap/long_press/swipe/scroll/input_text）必填，导航/启动应用可选。
 - `expected_window_id`：预期的活动窗口。
 - `observe_after`：动作后附带新观察，默认 false。
+- `lease_id`：可选的开发者测试占用；设备有占用时必须匹配占用客户端和 ID。没有占用时可直接执行动作。
+
+所有工具可携带 `device_id`、`service_instance_id`，由 HTTP 入口在分发前核验。桥接自动添加这两个保护字段，直连 API 可自行指定。所有工具结果及嵌套动作/观察结果包含 `device_id` 和 `service_instance_id`。地址不匹配返回 `DEVICE_MISMATCH`，服务实例不匹配返回 `STALE_OBSERVATION`，均明确 `action_executed:false`。
 
 节点与坐标不可混用。节点操作只使用节点明确支持的操作，不自动转成坐标点击。节点滚动支持 forward/backward；区域滚动支持 forward/down、backward/up、left/right，方向指内容浏览方向。文本最多 10000 字符，允许空串清空。
 
@@ -93,24 +102,28 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 ## 观察与坐标
 
-观察包含 observation_id、ui_version、captured_at_ms（Unix 毫秒）、window_id、package_name、display、tree、screenshot。
+观察包含 device_id、service_instance_id、observation_id、ui_version、captured_at_ms（Unix 毫秒）、window_id、package_name、display、tree、screenshot，以及 collection_attempts。
 
 - 坐标是默认显示器当前旋转方向下的**物理像素**，左上角为 (0,0)，包含系统栏和键盘区域。不是 dp，也不是裁剪后的应用坐标。
 - JPEG 默认长边不超过 1280，质量 80。返回宽高、scale_x/scale_y、offset_x/offset_y。
 - 映射：`screen_x = image_x * scale_x + offset_x`，y 同理。动作须传屏幕坐标。
 - 旋转值为 0/90/180/270。旋转或几何变化会使关联快照失效。
-- tree.elements 包含文本、描述、view_id、class、bounds、可见/可编辑状态、支持的动作以及 element_id。未命名 Android 动作以十进制 ID 表示。
+- tree.elements 默认精简：过滤不可见、空边界、屏幕外及无有效内容/动作的节点，保留必要父子结构，以 parent_id 指向最近保留父节点。element_id 保留原始树路径，不能用数组序号代替。默认省略 enabled:true、visible:true 和为 false 的状态字段，可读编辑字段提供 selection。`compact:false` 返回完整的有界树和状态字段。CLI 与 MCP 使用同一服务端输出。未命名 Android 动作以十进制 ID 表示。
 - Phone Use 自身的配对/授权界面不返回树内容，也不接受远程点击或文本操作（LOCAL_CONTROL_UI）；可通过 home/back/recents/launch_app 离开。仅支持默认显示器，其他显示器返回 DISPLAY_UNSUPPORTED。
-- 元素 ID 是快照内部路径，最多保留八份快照，每份最长 30 秒；不能当作永久 ID。
+- 元素 ID 是快照内部路径，每个客户端最多保留八份快照，每份最长 30 秒；已缓存结构指纹总估算内存预算 4 MiB，不在快照缓存中保留截图。客户端只能淘汰自己的快照；预算不能容纳新快照时返回 BUSY、reason:snapshot_budget_exceeded，不挤掉其他客户端的有效引用。不能将元素 ID 当作永久 ID。
 - 最多采集 1500 个节点，深度最多 40，单个文本/描述截断至 1024 字符。password 文本不返回。节点指纹使用完整字段的摘要，不依赖截断文本。
 - 截图失败时 `screenshot.available=false`，附带原因和 Android 错误码；与 `tree.available=false` 分别报告。未请求的部分为 null。
-- 采集前后检查界面事件版本、窗口、应用和显示几何；观察中途变化返回 OBSERVATION_INCONSISTENT，不自动重试。操作前再次检查，并重新解析、刷新、验证节点指纹。
+- 采集前等待目标窗口短暂安静（120 ms），单次等待最多 stable_wait_ms，最多采集 max_attempts 次。持续动画不会无限等待；每次采集仍核验前后目标窗口事件、窗口、应用、显示几何及遮挡。次数耗尽返回 OBSERVATION_INCONSISTENT。只重采观察，绝不因此重放动作。
+- 内容版本变化触发重新解析和目标校验，不再一律拒绝。目标字段、节点身份、祖先布局、所属容器内容、窗口或遮挡变化仍拒绝；列表节点复用不凭相同路径放行。replace 不因单纯选区变化失效，insert 必须匹配原文本和选区。坐标动作仍采用严格的观察上下文保护；节点失败不自动降级为坐标动作。
+- 错误保持原 code，并补充 `error.reason`、可取得的 `snapshot_age_ms/snapshot_ui_version/current_ui_version/events`。区分过期、淘汰、客户端/实例变化、内容/窗口/布局/容器变化。动作前拒绝返回 `action_executed:false`；无法确认是否输入时该字段为 null。
 
 界面事件异步到达，以上检查不能消除所有竞争条件。屏幕内容可在最终检查与系统动作之间变化。
 
 ## 授权、执行与去重
 
 配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
+
+连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。本地暂停、停止和撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
 
 授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
@@ -119,6 +132,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 ```json
 {
   "state":"executed",
+  "action_executed":true,
   "request_id":"tap-001",
   "execution":{"confirmation":"android_accepted","business_success":null},
   "observation":{}
@@ -140,7 +154,7 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 
 ## 主要错误码
 
-INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。
+INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
 
 ## MCP
 
@@ -149,6 +163,26 @@ INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、
 这是无服务端 MCP 会话的 Streamable HTTP POST/JSON 模式，不返回 Mcp-Session-Id。GET/DELETE 返回 405，无 SSE 推送。MCP 版本为 2025-03-26、2025-06-18 或 2025-11-25；缺省头兼容早期版本。2026-07-28 的无 initialize 协议暂不支持。
 
 tools/call 结果为 text 内容块；观察中的图片另作为 image 内容块。文本保留截图映射信息，去除重复的 data_base64。工具错误通过 isError 表示。MCP JSON-RPC 的 id 不是动作去重 ID；仍须传 arguments.request_id。用 cancel 工具取消动作；通用 JSON-RPC 取消通知不直接撤销设备输入。
+
+### 桥接批量测试
+
+`phoneuse_batch` 接收 1–100 个显式调用，示例：
+
+```json
+{
+  "calls": [
+    {"device_id":"DEVICE_A","tool":"get_capabilities"},
+    {"device_id":"DEVICE_B","tool":"get_capabilities"},
+    {"device_id":"DEVICE_A","tool":"observe","arguments":{"mode":"tree"}}
+  ],
+  "summary_only": false,
+  "continue_on_error": false
+}
+```
+
+同设备按输入顺序执行，不同设备并行；结果恢复为输入顺序。可在每项 arguments 中传 lease_id，也可使用该项顶层 lease_id。默认某设备步骤失败、结果未知、仍执行中或附带观察失败时，跳过该设备后续步骤，其他设备继续。需要在失败后继续的独立测试可显式设置 continue_on_error；不会重试已发送动作。
+
+summary 包含 total、succeeded、failed、pending、unknown、skipped，以及 states、error_codes、observation_error_codes。附带观察失败的已执行动作仍计为已执行，并单独统计观察错误。summary_only 省略逐项结果；批量结果不携带截图 base64。CLI 的 `batch @calls.json` 读取上述 calls 数组，`--summary-only` 与 `--continue-on-error` 对应同名选项。
 
 ## 实现参考
 

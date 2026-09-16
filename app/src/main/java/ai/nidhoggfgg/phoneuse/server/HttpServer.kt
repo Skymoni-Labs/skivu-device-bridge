@@ -12,10 +12,12 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.net.ServerSocket
 import java.net.Socket
+import java.util.UUID
 
 /** Small HTTP/1.1, one request per connection. Plain HTTP for the MVP. */
 class HttpServer(private val identities: IdentityStore, private val controller: DeviceController,
     private val assets: android.content.res.AssetManager,
+    private val serviceInstanceId: String = UUID.randomUUID().toString(),
     private val connected: (String) -> Unit) {
     private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
@@ -97,6 +99,12 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 write(socket, Response(200, text = assets.open("web/$file").bufferedReader().use { it.readText() }, contentType = type))
                 return
             }
+            // Public identity lets a paired bridge verify an address before sending its token.
+            if (path == "/identity") {
+                write(socket, if (request[0] == "GET") Response(200, identities.deviceIdentity.describe(serviceInstanceId))
+                    else Response(405, json("error" to "Only GET is supported"), allow = "GET"))
+                return
+            }
             val pairingPath = path.removePrefix("/browser")
             val isPairing = pairingPath in setOf("/pair/request", "/pair/status")
             if (!isPairing && path !in setOf("/api", "/api/tools", "/mcp", "/browser/session", "/browser/forget"))
@@ -161,9 +169,9 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             val payload = try { JSONObject(raw) } catch (_: Exception) { throw HttpError(400, "Invalid JSON object") }
             val response = if (isPairing) {
                 try {
-                    if (pairingPath == "/pair/request") Response(202, identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty()))
+                    if (pairingPath == "/pair/request") Response(202, pairingIdentity(identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty())))
                     else {
-                        val result = identities.pairing.poll(payload.string("pairing_id", 80), payload.string("pairing_secret", 128))
+                        val result = pairingIdentity(identities.pairing.poll(payload.string("pairing_id", 80), payload.string("pairing_secret", 128)))
                         if (path.startsWith("/browser/") && result.optString("status") == "approved") {
                             val browserToken = result.remove("token") as String
                             result.remove("token_type")
@@ -171,7 +179,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                         } else Response(200, result)
                     }
                 } catch (e: DeviceError) {
-                    Response(if (e.code == "PAIRING_BUSY") 429 else 400, errorResult(e))
+                    Response(if (e.code == "PAIRING_BUSY") 429 else 400, pairingIdentity(errorResult(e)))
                 }
             } else if (path == "/browser/session") {
                 // Migrate a previously saved browser Bearer credential without pairing again.
@@ -188,7 +196,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     val name = payload.string("tool")
                     if (payload.has("arguments") && payload.opt("arguments") !is JSONObject) throw HttpError(400, "arguments must be an object")
                     val args = payload.optJSONObject("arguments") ?: JSONObject()
-                    Response(200, controller.call(client, name, args))
+                    Response(200, callTool(client, name, args))
                 }
             }
             write(socket, response)
@@ -224,7 +232,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 if (params.has("arguments") && params.opt("arguments") !is JSONObject) return rpcError(-32602, "arguments must be an object")
                 if ((0 until ToolCatalog.all().length()).none { ToolCatalog.all().getJSONObject(it).getString("name") == name })
                     return rpcError(-32602, "Unknown tool")
-                val value = controller.call(client, name, params.optJSONObject("arguments") ?: JSONObject())
+                val value = callTool(client, name, params.optJSONObject("arguments") ?: JSONObject())
                 val content = JSONArray()
                 // Images are also emitted as MCP image blocks for clients with visual models.
                 val copy = JSONObject(value.toString())
@@ -234,14 +242,45 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     content.put(json("type" to "image", "mimeType" to screenshot.getString("mime_type"), "data" to screenshot.remove("data_base64")))
                 }
                 content.put(json("type" to "text", "text" to copy.toString()))
-                json("content" to content, "isError" to value.has("error"))
+                resultIdentity(json("content" to content, "isError" to value.has("error")))
             }
             else -> return rpcError(-32601, "Method not found")
         }
         return Response(200, json("jsonrpc" to "2.0", "id" to id, "result" to result))
     }
+    private fun pairingIdentity(result: JSONObject): JSONObject = result.apply {
+        val identity = identities.deviceIdentity.describe(serviceInstanceId)
+        identity.keys().forEach { put(it, identity.get(it)) }
+    }
+
+    private fun callTool(client: String, name: String, args: JSONObject): JSONObject {
+        fun mismatch(code: String, reason: String, expected: String, actual: String) = resultIdentity(json(
+            "state" to "failed", "action_executed" to false,
+            "error" to json("code" to code, "reason" to reason,
+                "message" to "Device or service identity changed; reconnect and obtain a new observation",
+                "expected" to expected, "actual" to actual)))
+        for ((field, current) in listOf("device_id" to identities.deviceIdentity.id, "service_instance_id" to serviceInstanceId)) {
+            if (!args.has(field)) continue
+            val supplied = args.opt(field) as? String
+            if (supplied.isNullOrEmpty()) return resultIdentity(errorResult(DeviceError("INVALID_ARGUMENT", "$field must be a non-empty string"))
+                .put("action_executed", false))
+            if (supplied != current) return if (field == "device_id") mismatch("DEVICE_MISMATCH", "device_changed", supplied, current)
+                else mismatch("STALE_OBSERVATION", "service_restarted", supplied, current)
+        }
+        val arguments = JSONObject(args.toString()).apply { remove("device_id"); remove("service_instance_id") }
+        // Controller retains action objects for deduplication. Decorate a copy, never those shared objects.
+        return resultIdentity(JSONObject(controller.call(client, name, arguments).toString()))
+    }
+
+    private fun resultIdentity(result: JSONObject): JSONObject = result.apply {
+        put("device_id", identities.deviceIdentity.id)
+        put("service_instance_id", serviceInstanceId)
+        listOf("request", "execution", "observation").forEach { key -> optJSONObject(key)?.let(::resultIdentity) }
+    }
+
     private fun write(socket: Socket, response: Response) {
-        val bytes = (response.text ?: response.body?.toString())?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        val body = response.body?.let { if (it.has("jsonrpc")) it else resultIdentity(it) }
+        val bytes = (response.text ?: body?.toString())?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
         val reason = when (response.status) { 200 -> "OK"; 202 -> "Accepted"; 401 -> "Unauthorized"; 403 -> "Forbidden"; 404 -> "Not Found"; 405 -> "Method Not Allowed"; else -> "Error" }
         val headers = "HTTP/1.1 ${response.status} $reason\r\nContent-Type: ${response.contentType}\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n" +
             "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\nReferrer-Policy: no-referrer\r\n" +

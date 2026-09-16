@@ -13,6 +13,7 @@ import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
 import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
+import java.util.UUID
 
 class PhoneUseService : Service() {
     lateinit var identities: IdentityStore
@@ -67,12 +68,13 @@ class PhoneUseService : Service() {
                 handler.post {
                     if (destroyed) return@post
                     identities = identity
-                    controller = DeviceController(AndroidBackend(this), SystemClock::elapsedRealtime, identities::exists) {
+                    val serviceInstanceId = UUID.randomUUID().toString()
+                    controller = DeviceController(AndroidBackend(this, serviceInstanceId = serviceInstanceId), SystemClock::elapsedRealtime, identities::exists) {
                         handler.post { if (!destroyed) updateNotification() }
                     }
                     if (settings.getBoolean("paused", false)) controller.pause()
                     try {
-                        server = HttpServer(identities, controller, assets) { client ->
+                        server = HttpServer(identities, controller, assets, serviceInstanceId) { client ->
                             lastClient = client; lastContact = SystemClock.elapsedRealtime()
                             handler.post { if (!destroyed) updateNotification() }
                         }.also { it.start() }

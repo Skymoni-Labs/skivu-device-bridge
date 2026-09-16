@@ -20,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
+import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
 import ai.nidhoggfgg.phoneuse.ui.theme.PhoneUseTheme
 import kotlinx.coroutines.delay
 import java.net.Inet4Address
@@ -50,6 +51,9 @@ class MainActivity : ComponentActivity() {
     @Composable private fun Dashboard() {
         var tick by remember { mutableIntStateOf(0) }
         var pairingError by remember { mutableStateOf<String?>(null) }
+        val deviceIdentity = remember { DeviceIdentity(this@MainActivity) }
+        var deviceName by remember { mutableStateOf(deviceIdentity.name) }
+        var nameError by remember { mutableStateOf<String?>(null) }
         LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
         @Suppress("UNUSED_VARIABLE") val refresh = tick
         val service = PhoneUseService.current
@@ -62,6 +66,23 @@ class MainActivity : ComponentActivity() {
             Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text("Phone Use", style = MaterialTheme.typography.headlineLarge)
                 Text("让外部 Agent 观察和操作这台 Android 手机。", style = MaterialTheme.typography.bodyLarge)
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("本机身份", style = MaterialTheme.typography.titleMedium)
+                        OutlinedTextField(value = deviceName, onValueChange = { deviceName = it; nameError = null },
+                            label = { Text("设备名称") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            isError = nameError != null)
+                        OutlinedButton(onClick = {
+                            nameError = runCatching { deviceIdentity.rename(deviceName); deviceName = deviceIdentity.name }.exceptionOrNull()?.message
+                            tick++
+                        }, enabled = deviceName != deviceIdentity.name) { Text("保存名称") }
+                        nameError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        val descriptor = deviceIdentity.describe("")
+                        Text("${Build.MODEL} · Android ${Build.VERSION.RELEASE}" + if (descriptor.getBoolean("is_emulator")) " · 模拟器" else " · 实体设备")
+                        SelectionContainer { Text("设备 ID：${deviceIdentity.id}", style = MaterialTheme.typography.bodySmall) }
+                        Text("设备 ID 随安装保留，IP 地址变化不影响配对身份。", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(service?.stateText() ?: "服务未启动", style = MaterialTheme.typography.titleMedium)

@@ -4,17 +4,19 @@
 
 ## 已实现
 
-- 无障碍界面树、按需 JPEG 截图、快照元素引用及窗口/版本检查。
+- 默认精简无障碍树、按需完整树/JPEG 截图、有上限的稳定重采，以及目标/容器/窗口校验。
 - 节点或坐标点击、长按、路径滑动、滚动、中文文本替换/插入、返回/主页/最近任务、打开应用。
 - 授权客户端共用串行队列、取消、请求去重、未知结果查询。
 - HTTP 直连 JSON API、MCP Streamable HTTP，以及 Python MCP stdio 桥接。
+- 一个桥接管理多设备，安装级身份、设备命名、明确 device_id 路由和独立设备并发。
+- 按客户端分配快照额度，错误原因诊断、可选限时测试占用，以及批量结果汇总。
 - 内置 API 调用页面：接口列表与搜索、参数表单、JSON 编辑、响应查看，以及 API/MCP 连接信息。
 - 手机审批后客户端可直接调用 API；授权持续有效，可在手机端暂停服务或撤销客户端。
 - 通知栏暂停/恢复和停止；不使用悬浮窗。
 
 ## 构建与启动
 
-项目保留原有 Gradle 9.6、AGP 9.4、SDK 37 配置；使用 JDK 25。
+项目使用 Gradle 9.7.1、AGP 9.4、SDK 37 配置；使用 JDK 25。
 
 ```powershell
 $env:JAVA_HOME = '你的 JDK 25 路径'
@@ -50,26 +52,33 @@ curl.exe http://127.0.0.1:8443/
 
 ## Python 客户端
 
-Python 3.10+，仅使用标准库。首次请求配对，手机批准后自动保存 token，后续 API/MCP 调用自动携带。
+Python 3.10+，仅使用标准库。首次请求配对，手机批准后自动保存 token，后续 API/MCP 调用自动携带。输入输出默认 UTF-8。
 
 ```sh
 python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
-python tools/phoneuse_client.py call get_capabilities
-python tools/phoneuse_client.py call observe '{"mode":"tree"}'
+python tools/phoneuse_client.py list-devices
+python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
+python tools/phoneuse_client.py call observe '{"mode":"tree"}' --device-id DEVICE_ID
+python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
+python tools/phoneuse_client.py call observe '{"mode":"tree"}' --device-id DEVICE_ID --full-tree
 ```
 
-默认连接数据保存在用户目录 `.phoneuse.json`，可用全局参数 `--config 路径` 指定位置。客户端负责读写，用户与 AI 无需查看文件内容。已有配对会自动复用；换手机请使用独立配置，地址不匹配时不会发送旧凭证。凭证可从手机端撤销，不应提交到仓库。Windows 用户也可用 `@arguments.json` 避免终端 JSON 引号问题。
+默认连接数据保存在用户目录 `.phoneuse.json`，可用全局参数 `--config 路径` 指定位置。同一配置管理多台设备；每次调用都指定配对/列表返回的 DEVICE_ID。客户端负责读写，用户与 AI 无需查看凭证文件。再次 `pair --url 新地址 --device-id DEVICE_ID` 可安全更新地址；桥接发送凭证前核验安装身份，连到其他设备时拒绝复用旧凭证。凭证可从手机端撤销，不应提交到仓库。Windows 用户也可用 `@arguments.json` 避免终端 JSON 引号问题。
 
-`pair` 首次显示核对码并等待手机批准，之后重复执行只检查已保存的连接，不会重复配对。等待中的请求也会保存，客户端重开可继续领取。已有旧版 `phoneuse.json` 仍可通过 `--config` 使用。
+`pair` 首次显示核对码并等待手机批准，之后重复执行只检查已保存的连接，不会重复配对。等待中的请求也会保存，客户端重开可继续领取。旧版配置若未保存安装级 device_id，首次升级需要重新在手机批准，避免仅按地址复用授权。新配对完成后恢复自动连接。
+
+CLI 默认从 JSON 中省略截图 base64，保留尺寸及坐标映射；`--screenshot-out` 保存图片，`--include-image-data` 可显式保留 base64。MCP 仍以图片内容块返回截图。精简树默认省略 enabled:true、visible:true 和为 false 的状态字段，完整树使用 `compact:false` 或 CLI 的 `--full-tree`。
 
 执行动作示例：
 
 ```sh
-python tools/phoneuse_client.py call home '{"request_id":"home-001","observe_after":true}'
-python tools/phoneuse_client.py call get_status '{"request_id":"home-001"}'
+python tools/phoneuse_client.py call home '{"request_id":"home-001","observe_after":true}' --device-id DEVICE_ID
+python tools/phoneuse_client.py call get_status '{"request_id":"home-001"}' --device-id DEVICE_ID
 ```
 
-所有输入动作都必须携带 唯一 `request_id`。节点操作还需携带 `observation_id` 和 `element_id`。网络错误后查询原 ID 的状态；不要换 ID 自动重放。
+所有输入动作都必须携带唯一 `request_id`。节点操作携带 `observation_id` 和 `element_id`，坐标点击/滑动/区域滚动也必须关联 `observation_id`。网络错误后查询原 ID 的状态；不要换 ID 自动重放。动作成功但附带观察失败时保留 `state:executed`、`action_executed:true`，失败原因单独放在 observation 中。
+
+连续测试可调用 `acquire_device` 取得有期限的 lease_id，并在后续动作中携带它，最后调用 `release_device`。没有占用时照常直接操作；手机本地暂停/停止始终有效。批量调用可用 `batch @calls.json` 或 MCP 的 `phoneuse_batch`；每项显式提供 device_id、tool、arguments，同设备顺序执行、不同设备并行，分别汇总动作错误和附带观察错误。默认停止该设备在失败或未完成步骤之后的调用；`--summary-only` 只显示汇总。批量接口不做任务规划或动作重试。
 
 ## MCP 接入
 
@@ -86,9 +95,9 @@ AI 推荐使用 stdio 桥接，只配置手机地址，无需预先配对或填�
 }
 ```
 
-首次让 AI 调用 `phoneuse_connect`，手机显示核对码；手机批准后再次调用同一工具即可完成连接。工具只返回配对状态和核对码，不返回 token 或领取秘密。批准后通过 `notifications/tools/list_changed` 更新设备工具列表。以后直接调用 `observe`、`tap` 等工具，桥接自动使用保存的授权；AI 客户端、桥接进程或手机 App 重启不需要再次配对。
+首次让 AI 调用 `phoneuse_connect({"address":"http://手机地址:8443"})`，手机显示核对码；手机批准后再次调用该工具并指定返回的 device_id 即可完成连接。工具返回明确的设备身份、配对状态和核对码，不返回 token 或领取秘密。批准后通过 `notifications/tools/list_changed` 更新设备工具列表。以后调用 `observe`、`tap` 等工具都必须带 device_id，桥接自动使用该设备的授权；已绑定身份的配对可跨桥接/手机服务重启保留。
 
-手机暂时离线时 MCP 仍可初始化，保留原配对；服务恢复后调用 `phoneuse_connect` 刷新工具列表。若 AI 宿主未刷新列表，也可通过 `phoneuse_call` 传入 `tool` 和 `arguments` 调用设备接口。桥接不执行规划或动作重试。客户端环境须能访问手机地址；不包含互联网中继。
+使用 `phoneuse_list_devices` 查看设备名称、型号、Android 版本、地址、模拟器标记和在线状态。手机暂时离线时 MCP 仍可初始化且保留原配对；其他设备调用继续独立执行。服务恢复后按 device_id 调用 `phoneuse_connect` 刷新工具列表。若 AI 宿主未刷新列表，也可通过 `phoneuse_call` 传入 `device_id`、`tool` 和 `arguments` 调用设备接口。客户端环境须能访问手机地址；不包含互联网中继。
 
 底层直连入口仍为 `http://手机地址:8443/mcp`，供自行管理 Bearer 凭证的程序使用。支持 MCP `2025-03-26`、`2025-06-18`、`2025-11-25` 的 POST/JSON 传输；不提供 SSE。2026 版协议未实现。
 

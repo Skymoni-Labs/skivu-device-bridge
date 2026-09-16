@@ -12,6 +12,7 @@ import java.util.UUID
 /** Only token hashes are persisted; pending pairing responses expire in memory. */
 @android.annotation.SuppressLint("ApplySharedPref", "UseKtx") // Synchronous persistence is part of credential issuance/revocation.
 class IdentityStore(context: Context) {
+    val deviceIdentity = DeviceIdentity(context)
     private val preferences = context.getSharedPreferences("clients", Context.MODE_PRIVATE)
     private val random = SecureRandom()
     val pairing = PairingRequests(SystemClock::elapsedRealtime, ::issue)

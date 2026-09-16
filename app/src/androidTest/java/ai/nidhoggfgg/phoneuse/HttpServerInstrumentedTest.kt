@@ -16,6 +16,58 @@ import java.net.Socket
 /** Real production HTTP server running on Android. */
 @RunWith(AndroidJUnit4::class)
 class HttpServerInstrumentedTest {
+    @Test fun identityIsAttachedToRetainedActionsAndFailedFollowupObservations() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val identity = IdentityStore(context)
+        var actions = 0
+        val backend = object : DeviceBackend {
+            override fun capabilities() = JSONObject()
+            override fun observe(args: JSONObject): JSONObject = fail("OBSERVATION_INCONSISTENT", "Test followup failed")
+            override fun listApps() = JSONObject()
+            override fun waitForChange(args: JSONObject, check: () -> Unit) = JSONObject()
+            override fun act(name: String, args: JSONObject, check: () -> Unit): JSONObject {
+                check(); actions++
+                return json("accepted" to true)
+            }
+        }
+        val controller = DeviceController(backend, SystemClock::elapsedRealtime, identity::exists)
+        val server = HttpServer(identity, controller, context.assets, "test-instance") {}
+        val created = identity.pairing.create("Identity metadata test", "localhost")
+        identity.pairing.decide(created.getString("pairing_id"), true)
+        val credential = identity.pairing.poll(created.getString("pairing_id"), created.getString("pairing_secret"))
+        fun call(tool: String, args: JSONObject): JSONObject = Socket("127.0.0.1", 18444).use { socket ->
+            socket.soTimeout = 10_000
+            val body = json("tool" to tool, "arguments" to args).toString().toByteArray(Charsets.UTF_8)
+            val header = "POST /api HTTP/1.1\r\nHost: 127.0.0.1:18444\r\nAuthorization: Bearer ${credential.getString("token")}\r\n" +
+                "Content-Type: application/json\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n"
+            socket.outputStream.write(header.toByteArray(Charsets.US_ASCII))
+            socket.outputStream.write(body); socket.outputStream.flush()
+            JSONObject(socket.inputStream.readBytes().toString(Charsets.UTF_8).substringAfter("\r\n\r\n"))
+        }
+        fun assertIdentity(result: JSONObject) {
+            assertEquals(identity.deviceIdentity.id, result.getString("device_id"))
+            assertEquals("test-instance", result.getString("service_instance_id"))
+        }
+        try {
+            server.start(18444)
+            val args = json("request_id" to "identity-action", "observe_after" to true)
+            val result = call("home", args)
+            assertEquals("executed", result.getString("state"))
+            assertIdentity(result)
+            assertIdentity(result.getJSONObject("execution"))
+            assertIdentity(result.getJSONObject("observation"))
+            assertEquals("OBSERVATION_INCONSISTENT", result.getJSONObject("observation").getJSONObject("error").getString("code"))
+            assertIdentity(call("home", args))
+            assertEquals(1, actions)
+            val retained = call("get_status", json("request_id" to "identity-action")).getJSONObject("request")
+            assertIdentity(retained)
+            assertIdentity(retained.getJSONObject("observation"))
+        } finally {
+            identity.revoke(credential.getString("client_id"))
+            identity.pairing.clear(); server.stop(); controller.stop()
+        }
+    }
+
     @Test fun httpServesWebPairingApiAndMcp() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         var identity = IdentityStore(context)
@@ -47,20 +99,41 @@ class HttpServerInstrumentedTest {
             assertEquals(200, request("/", site = "cross-site").first)
             assertEquals(403, request("/pair/request", json("client_name" to "cross-site"), site = "cross-site").first)
             assertEquals(401, request("/api/tools").first)
+            val publicIdentity = JSONObject(request("/identity").second)
+            val deviceId = publicIdentity.getString("device_id")
+            val instanceId = publicIdentity.getString("service_instance_id")
+            assertEquals(setOf("device_id", "name", "model", "android_version", "is_emulator", "service_instance_id"), publicIdentity.keys().asSequence().toSet())
+            assertEquals(deviceId, IdentityStore(context).deviceIdentity.id)
+            assertEquals(405, request("/identity", JSONObject()).first)
             val pending = request("/pair/request", json("client_name" to "HTTP regression test"))
             assertEquals(202, pending.first)
             val created = JSONObject(pending.second)
+            assertEquals(deviceId, created.getString("device_id"))
+            assertEquals(instanceId, created.getString("service_instance_id"))
             val args = json("pairing_id" to created.getString("pairing_id"), "pairing_secret" to created.getString("pairing_secret"))
             assertEquals("pending", JSONObject(request("/pair/status", args).second).getString("status"))
             identity.pairing.decide(created.getString("pairing_id"), true)
             val credential = JSONObject(request("/pair/status", args).second)
+            assertEquals(deviceId, credential.getString("device_id"))
             clientId = credential.getString("client_id")
             val token = credential.getString("token")
             assertTrue(JSONObject(request("/api/tools", token = token).second).getJSONArray("tools").length() > 0)
             val status = request("/api", json("tool" to "get_status"), token)
             assertEquals(200, status.first); assertFalse(JSONObject(status.second).has("error"))
+            assertEquals(deviceId, JSONObject(status.second).getString("device_id"))
+            val wrongDevice = JSONObject(request("/api", json("tool" to "get_status", "arguments" to json("device_id" to "another-device")), token).second)
+            assertEquals("DEVICE_MISMATCH", wrongDevice.getJSONObject("error").getString("code"))
+            assertFalse(wrongDevice.getBoolean("action_executed"))
+            val wrongInstance = JSONObject(request("/api", json("tool" to "get_status", "arguments" to json("service_instance_id" to "old-service")), token).second)
+            assertEquals("service_restarted", wrongInstance.getJSONObject("error").getString("reason"))
+            val routed = JSONObject(request("/api", json("tool" to "get_status", "arguments" to json("device_id" to deviceId, "service_instance_id" to instanceId)), token).second)
+            assertFalse(routed.has("error"))
             val rpc = request("/mcp", json("jsonrpc" to "2.0", "id" to 1, "method" to "tools/list"), token)
             assertEquals(200, rpc.first); assertTrue(JSONObject(rpc.second).has("result"))
+            val toolRpc = JSONObject(request("/mcp", json("jsonrpc" to "2.0", "id" to 2, "method" to "tools/call",
+                "params" to json("name" to "get_status")), token).second).getJSONObject("result")
+            assertEquals(deviceId, toolRpc.getString("device_id"))
+            assertEquals(instanceId, JSONObject(toolRpc.getJSONArray("content").getJSONObject(0).getString("text")).getString("service_instance_id"))
             val browserPair = JSONObject(request("/browser/pair/status", args).second)
             assertFalse(browserPair.has("token")); assertFalse(browserPair.has("token_type"))
             val cookieHeader = responseHeaders.lineSequence().first { it.startsWith("Set-Cookie:") }.substringAfter(": ")
@@ -76,6 +149,9 @@ class HttpServerInstrumentedTest {
             controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
             server = HttpServer(identity, controller, context.assets) {}
             server.start(18443)
+            val restartedIdentity = JSONObject(request("/identity").second)
+            assertEquals(deviceId, restartedIdentity.getString("device_id"))
+            assertNotEquals(instanceId, restartedIdentity.getString("service_instance_id"))
             assertTrue(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
             assertEquals(200, request("/api", json("tool" to "get_status"), cookie = cookie).first)
             assertEquals(200, request("/api/tools", token = token).first)
