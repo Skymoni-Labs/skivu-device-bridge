@@ -1,141 +1,110 @@
-# Phone Use — Android MVP
+# Phone Use
 
-在手机本机运行的界面观察与操作服务。Android 11+，不依赖 root、ADB、电脑或模型服务。
+**English** | [简体中文](README.zh-CN.md)
 
-## 已实现
+Give AI agents a way to see and interact with an Android phone—with approval on the device.
 
-- 默认立即观察、decision 精简节点、按需完整树/JPEG 截图及有界重采；节点只核验所选目标，坐标支持键盘和系统界面。
-- 动作默认只执行一次，等待和观察由 AI 自行组合；observe_after 为显式可选项。
-- 节点或坐标点击、长按、路径滑动、滚动、中文文本替换/插入、返回/主页/最近任务、打开应用。
-- 授权客户端共用串行队列、取消、请求去重、未知结果查询。
-- HTTP 直连 JSON API、MCP Streamable HTTP，以及 Python MCP stdio 桥接。
-- 一个桥接管理多设备，安装级身份、设备命名、明确 device_id 路由和独立设备并发。
-- 按客户端分配快照额度，错误原因诊断、可选限时测试占用，以及批量结果汇总。
-- 内置 API 调用页面：接口列表与搜索、参数表单、JSON 编辑、响应查看，以及 API/MCP 连接信息。
-- 手机审批后客户端可直接调用 API；授权持续有效，可在手机端暂停服务或撤销客户端。
-- 通知栏暂停/恢复和停止；不使用悬浮窗。
-- 整理后的首页按本机、控制服务、连接与配对分区；设备名称默认读取系统可读名称，点击旁边的“修改”即可重命名，设备 ID 和连接细节按需展开。
-- 中英文界面：App 设置页支持跟随系统、中文、English，通知同步切换；Web 控制台跟随浏览器语言，未支持的语言回退到英文。
+Phone Use runs an observation and control service on Android 11+. It exposes accessibility trees, screenshots, and device actions through a JSON API, MCP, and an installable agent Skill. The phone service needs no root, ADB, or model backend. An AI client runs separately and connects over your local network.
 
-## 多语言
+## What you can do
 
-点击首页右上角的设置按钮，可选择“跟随系统 / 中文 / English”，Android 11+ 均可保存选择并立即生效。Android 13+ 与系统设置中的“应用语言”同步；切换语言不会重置服务、暂停状态或配对记录。系统设置中的无障碍服务说明由系统负责显示。
+- **Observe the screen:** compact UI trees, JPEG screenshots, full trees on demand, and explicit waits for an app or element.
+- **Interact with apps:** tap, long-press, swipe, scroll, replace or insert text, launch apps, and use Back, Home, or Recents.
+- **Connect your preferred client:** use the built-in web console, Python CLI, MCP bridge, or `phone-use` Skill.
+- **Use multiple devices:** route every call by device ID; different devices can run independently.
+- **Keep control on the phone:** approve each client locally, revoke access, and pause or stop the service from the notification.
 
-设备名称优先读取系统设备名（含厂商的 `device_name` 设置），读取不到时回退到品牌和型号，模拟器使用易读的默认名。部分厂商只提供型号编码，无法保证取得所有机型的市场名称；手动修改的名称始终优先，且不修改 Android 系统设备名或安装 ID。
+The app supports English and Simplified Chinese, with a system-language option. The web console follows the browser language and falls back to English.
 
-Android 文案统一放在 `app/src/main/res/values/strings.xml`（英文默认值）和 `values-zh/strings.xml`（简体中文），包含格式化占位符和倒计时复数。新增语言时添加对应的 `values-语言/strings.xml`，并更新 `res/xml/locales_config.xml`；通知按钮的本地控制保护会从这份语言列表读取所有翻译。
+## Quick start
 
-Web 控制台文案集中在 `app/src/main/assets/web/i18n.js`，按浏览器语言优先级匹配，刷新页面后生效。新增语言时扩展其中的语言字典。API 名称、参数键、原始响应和服务端工具说明保持协议原样。
+### 1. Build and install
 
-## 构建与启动
-
-项目使用 Gradle 9.7.1、AGP 9.4、SDK 37 配置；使用 JDK 25。
-
-```powershell
-$env:JAVA_HOME = '你的 JDK 25 路径'
-.\gradlew.bat :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
-```
-
-APK 输出：`app/build/outputs/apk/debug/app-debug.apk`。
-
-1. 安装并打开应用。配对及调试状态 API 无须开启无障碍；要操作设备时，在系统无障碍设置中开启 **Phone Use**。部分系统对侧载应用需要先允许“受限设置”。
-2. 点击“启动服务”，允许通知。Android 17+ 还需要局域网权限。
-3. 在电脑浏览器打开手机显示的 `http://手机IPv4:8443/`，直接进入控制台。也可使用下述 Python 客户端。
-4. 点击网页“请求配对”，手机 App 中显示客户端名称、来源 IP 和核对码。核对两端核对码，点击“授权”；网页自动领取凭证并加载接口列表。
-5. 从 API 列表选择接口，填写参数或直接编辑 JSON，点击“调用 API”查看响应。输入动作前保持手机亮屏、解锁；重试沿用原 request_id，新动作点击“生成新动作 ID”。
-
-网页面向有一定技术基础的用户，直接展示 API 列表、参数与响应。截图仅在主动调用 observe 后作为响应附件展示。首次配对在手机批准，之后浏览器自动保存并携带授权；关闭标签页、重启浏览器或 App 后均可继续连接。页面和工具响应不显示长期 token，也无需复制或导出凭证。旧版仍打开的标签页会自动迁移已有凭证。手机端“解除配对”或网页“解除此浏览器配对”可撤销授权。
-
-App 记住服务启用与暂停状态。重新打开 App 会恢复之前启用的服务；系统回收进程时允许恢复前台服务。主动停止后不会因重开 App 自动启动。系统强行停止、手机重启或厂商后台限制可能需要重新打开 App，但已完成的配对仍保留。不自动重放任何输入动作。
-
-配对按客户端保存：网页与 MCP 各批准一次。清除浏览器 Cookie、删除客户端配置、卸载/清除手机 App 数据或主动解除配对后需要重新授权。使用固定手机地址；浏览器换地址属于另一个站点。首次尚未完成的配对请求两分钟有效，服务重启会清除未完成请求。
-
-### 本机转发与连接排查
-
-当前使用明文 HTTP，端口继续使用 **8443**，保留现有转发配置。配对 token、截图和操作请求不做传输加密。
-
-```powershell
-adb forward tcp:8443 tcp:8443
-curl.exe http://127.0.0.1:8443/
-```
-
-浏览器直接打开 `http://127.0.0.1:8443/`，不需要接受证书。Windows PowerShell 中 `curl` 可能是 `Invoke-WebRequest` 的别名，示例明确使用 `curl.exe`。
-
-从 HTTPS 版本覆盖升级后，已有客户端 token 保留。已有配置将 `url` 的 `https://` 改成 `http://` 即可，`fingerprint` 字段不再使用，可删除。网页因协议不同属于新来源，需要重新配对；不需要卸载应用。
-
-## Python 客户端
-
-Python 3.10+，仅使用标准库。首次请求配对，手机批准后自动保存 token，后续 API/MCP 调用自动携带。输入输出默认 UTF-8。
+You need **JDK 25** and an Android SDK installation with **API 37**. The repository pins Gradle **9.7.1** and Android Gradle Plugin **9.4.0**. Configure your SDK in Android Studio or an untracked `local.properties` file.
 
 ```sh
-python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
-python tools/phoneuse_client.py list-devices
-python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
-python tools/phoneuse_client.py call observe '{"mode":"tree"}' --device-id DEVICE_ID
-python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
-python tools/phoneuse_client.py call observe '{"mode":"tree"}' --device-id DEVICE_ID --full-tree
+# macOS / Linux
+./gradlew :app:assembleDebug
 ```
 
-默认连接数据保存在用户目录 `.phoneuse.json`，可用全局参数 `--config 路径` 指定位置。同一配置管理多台设备；每次调用都指定配对/列表返回的 DEVICE_ID。客户端负责读写，用户与 AI 无需查看凭证文件。再次 `pair --url 新地址 --device-id DEVICE_ID` 可安全更新地址；桥接发送凭证前核验安装身份，连到其他设备时拒绝复用旧凭证。凭证可从手机端撤销，不应提交到仓库。Windows 用户也可用 `@arguments.json` 避免终端 JSON 引号问题。
-
-`pair` 首次显示核对码并等待手机批准，之后重复执行只检查已保存的连接，不会重复配对。等待中的请求也会保存，客户端重开可继续领取。旧版配置若未保存安装级 device_id，首次升级需要重新在手机批准，避免仅按地址复用授权。新配对完成后恢复自动连接。
-
-CLI 默认从 JSON 中省略截图 base64，保留尺寸及坐标映射；`--screenshot-out` 保存图片，`--include-image-data` 可显式保留 base64。MCP 仍以图片内容块返回截图。精简树默认省略 enabled:true、visible:true 和为 false 的状态字段，完整树使用 `output:"legacy",compact:false` 或 CLI 的 `--full-tree`。
-
-执行动作示例：
-
-```sh
-python tools/phoneuse_client.py call home '{"request_id":"home-001"}' --device-id DEVICE_ID
-python tools/phoneuse_client.py call get_status '{"request_id":"home-001"}' --device-id DEVICE_ID
+```powershell
+# Windows PowerShell
+.\gradlew.bat :app:assembleDebug
 ```
 
-所有输入动作都必须携带唯一 `request_id`。节点操作携带 `observation_id` 和 `element_id`，坐标点击/滑动/区域滚动也必须关联 `observation_id`。网络错误后查询原 ID 的状态；不要换 ID 自动重放。动作成功但附带观察失败时保留 `state:executed`、`action_executed:true`，失败原因单独放在 observation 中。
+Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See [development and validation](docs/validation.md) for checks and emulator tests.
 
-连续测试可调用 `acquire_device` 取得有期限的 lease_id，并在后续动作中携带它，最后调用 `release_device`。没有占用时照常直接操作；手机本地暂停/停止始终有效。批量调用可用 `batch @calls.json` 或 MCP 的 `phoneuse_batch`；每项显式提供 device_id、tool、arguments，同设备顺序执行、不同设备并行，分别汇总动作错误和附带观察错误。默认停止该设备在失败或未完成步骤之后的调用；`--summary-only` 只显示汇总。批量接口不做任务规划或动作重试。
+### 2. Start the phone service
 
-## AI 快速接入：MCP 与 Skill
+1. Open Phone Use and enable its accessibility service in Android settings. Some devices require allowing restricted settings for a sideloaded app first.
+2. Start the service and allow notifications. On Android 17+, grant local network permission when requested.
+3. Keep the phone awake and unlocked for input. Connect your client machine to a network that can reach the IPv4 address shown in the app.
 
-无需手动下载 ZIP。电脑需有 Node.js 22.20+（npm/npx）、Git、Python 3.10+，并能访问手机地址。下列命令从 GitHub 自动获取接入文件。
+### 3. Pair a client
 
-**Skill**，安装时选择自己的 AI 客户端：
+Open `http://PHONE_IPV4:8443/` in your browser, request pairing, compare the verification codes, and approve the request **on the phone**. The console then lets you browse tools, edit parameters, and inspect responses.
+
+Pairing persists across client and app restarts until revoked or its stored credentials are removed. The browser and MCP bridge pair separately by default. Accessibility is required for device interaction; pairing and status queries can work without it.
+
+**Transport:** port 8443 uses plain HTTP, not HTTPS. Credentials, screenshots, and actions are not encrypted in transit. Use a trusted network; there is no internet relay. See [connection details](docs/usage.md).
+
+## Connect an AI agent
+
+For installation through GitHub, use **Node.js 22.20+**, **Git**, and **Python 3.10+**. The AI host must be able to run local programs and reach the phone. Choose either integration:
+
+### Agent Skill
 
 ```sh
 npx skills add nidhoggfgg/PhoneUse --skill phone-use
 ```
 
-**MCP**，让 AI 客户端通过此命令启动：
+Select your AI client and installation scope. Then ask it:
+
+> Use $phone-use to connect to http://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
+
+### MCP
+
+Configure your AI client to start this stdio server:
 
 ```sh
 npx -y --package=github:nidhoggfgg/PhoneUse phone-use
 ```
 
-查看 [AI 导入指南](docs/integrations.md)，包含 Codex 一条命令注册、其他宿主配置生成，以及可直接交给 AI 的安装指令。首次连接在手机批准，之后自动携带授权。维护者仍可运行 `python tools/export_integrations.py` 生成离线 ZIP 包。
+Generate a configuration snippet with `phone-use print-config`, or `phone-use print-config --host codex`, using the same `npx` prefix. The bridge handles pairing and stored credentials without exposing tokens to the model.
 
-## MCP 接入
+The [AI integration guide](docs/integrations.md) includes full commands, Windows setup, first connection, updates, and offline packages. GitHub installation requires access to this repository; the package name does not imply an npm registry release.
 
-AI 推荐使用 stdio 桥接，只配置手机地址，无需预先配对或填写 token：
+## Python CLI
 
-```json
-{
-  "mcpServers": {
-    "phone-use": {
-      "command": "python",
-      "args": ["/absolute/path/tools/phoneuse_client.py", "mcp-stdio", "--url", "http://192.168.1.20:8443", "--name", "My AI"]
-    }
-  }
-}
+The CLI uses Python 3.10+ and the standard library only. From a repository checkout:
+
+```sh
+python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
+python tools/phoneuse_client.py list-devices
+python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
+python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
 ```
 
-首次让 AI 调用 `phoneuse_connect({"address":"http://手机地址:8443"})`，手机显示核对码；手机批准后再次调用该工具并指定返回的 device_id 即可完成连接。工具返回明确的设备身份、配对状态和核对码，不返回 token 或领取秘密。批准后通过 `notifications/tools/list_changed` 更新设备工具列表。以后调用 `observe`、`tap` 等工具都必须带 device_id，桥接自动使用该设备的授权；已绑定身份的配对可跨桥接/手机服务重启保留。
+Replace `DEVICE_ID` with the ID returned by pairing. Credentials are managed in `~/.phoneuse.json`; do not commit or distribute that file. See the [usage guide](docs/usage.md) for actions, JSON arguments, reconnection, and batches.
 
-使用 `phoneuse_list_devices` 查看设备名称、型号、Android 版本、地址、模拟器标记和在线状态。手机暂时离线时 MCP 仍可初始化且保留原配对；其他设备调用继续独立执行。服务恢复后按 device_id 调用 `phoneuse_connect` 刷新工具列表。若 AI 宿主未刷新列表，也可通过 `phoneuse_call` 传入 `device_id`、`tool` 和 `arguments` 调用设备接口。客户端环境须能访问手机地址；不包含互联网中继。
+## Execution model and limitations
 
-底层直连入口仍为 `http://手机地址:8443/mcp`，供自行管理 Bearer 凭证的程序使用。支持 MCP `2025-03-26`、`2025-06-18`、`2025-11-25` 的 POST/JSON 传输；不提供 SSE。2026 版协议未实现。
+Actions execute once by default. Waiting, observing, and verifying the result are explicit client decisions. Every input action needs a unique `request_id`; after a network error, query the original request instead of replaying it under a new ID.
 
-## 文档与验证
+An `executed` result means Android accepted the action or completed the gesture—it does not prove the app task succeeded. Trees and screenshots are collected separately, and protected windows, custom controls, keyboards, and vendor background policies can limit what is available. Physical-device coverage remains incomplete; see the [validation guide](docs/validation.md).
 
-- [接口协议、错误和保留规则](docs/api.md)
-- [实机验收清单](docs/validation.md)
-- `DeviceControllerTest` 覆盖授权、串行队列、去重、未知结果、取消/暂停、凭证撤销与参数校验。
+## Documentation
 
-截图与界面树不是原子采集；实现对明确的窗口/页面及显示变化有限重采，不把普通刷新视为整份观察失效。节点返回成功仅代表 Android 接受操作，手势返回完成也不等于业务成功。实际输入兼容性、受保护窗口和厂商后台限制需要实机验证。
+| Guide | Contents |
+| --- | --- |
+| [Usage and connections](docs/usage.md) | Web console, CLI, pairing, language settings, troubleshooting |
+| [AI integrations](docs/integrations.md) | Skill and MCP installation, configuration, updates, offline distribution |
+| [API reference](docs/api.md) | Tools, parameters, observation semantics, errors, request retention |
+| [Development and validation](docs/validation.md) | Build checks, emulator fixtures, physical-device acceptance |
+| [Contributing](CONTRIBUTING.md) | Changes, bug reports, documentation conventions |
+
+Each current guide has an English / 简体中文 switch at the top.
+
+## License
+
+The public repository does not yet include a license file, and the package is marked `UNLICENSED`. An open-source license must be confirmed before release.

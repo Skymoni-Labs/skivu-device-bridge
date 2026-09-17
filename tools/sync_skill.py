@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COPIES = {
     "tools/phoneuse_client.py": "skills/phone-use/scripts/phoneuse_client.py",
     "docs/api.md": "skills/phone-use/references/api.md",
+    "docs/api.zh-CN.md": "skills/phone-use/references/api.zh-CN.md",
 }
 
 

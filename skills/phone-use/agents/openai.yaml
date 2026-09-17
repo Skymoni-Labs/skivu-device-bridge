@@ -1,4 +1,4 @@
 interface:
   display_name: "Phone Use"
-  short_description: "通过 Phone Use 观察和操作 Android 手机，执行应用任务并验证结果"
-  default_prompt: "使用 $phone-use 连接我的手机，观察当前界面并完成我指定的操作。"
+  short_description: "Observe and control Android phones with Phone Use"
+  default_prompt: "Use $phone-use to connect to my phone, observe its screen, and perform the task I specify."

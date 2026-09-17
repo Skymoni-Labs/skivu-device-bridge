@@ -12,12 +12,15 @@ PACKAGES = {
         "phoneuse_client.py": "tools/phoneuse_client.py",
         "configure.py": "integrations/mcp/configure.py",
         "README.md": "integrations/mcp/README.md",
+        "README.zh-CN.md": "integrations/mcp/README.zh-CN.md",
     },
     "phone-use": {
         "SKILL.md": "skills/phone-use/SKILL.md",
+        "README.zh-CN.md": "skills/phone-use/README.zh-CN.md",
         "agents/openai.yaml": "skills/phone-use/agents/openai.yaml",
         "scripts/phoneuse_client.py": "skills/phone-use/scripts/phoneuse_client.py",
         "references/api.md": "skills/phone-use/references/api.md",
+        "references/api.zh-CN.md": "skills/phone-use/references/api.zh-CN.md",
     },
 }
 
@@ -40,7 +43,16 @@ def export(destination):
             for target, data in files.items():
                 bundle.writestr(f"{name}/{target}", data)
         artifacts.append(archive)
-    (destination / "INSTALL.md").write_bytes((ROOT / "docs/integrations.md").read_bytes())
+    # Installation guides are renamed in the distribution; preserve language links.
+    for source, target, sibling, translated_sibling in (
+        ("integrations.md", "INSTALL.md", "integrations.zh-CN.md", "INSTALL.zh-CN.md"),
+        ("integrations.zh-CN.md", "INSTALL.zh-CN.md", "integrations.md", "INSTALL.md"),
+    ):
+        guide = (ROOT / "docs" / source).read_text(encoding="utf-8")
+        (destination / target).write_text(
+            guide.replace(f"]({sibling})", f"]({translated_sibling})"),
+            encoding="utf-8", newline="\n",
+        )
     (destination / "SHA256SUMS.txt").write_text("".join(
         f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in artifacts), encoding="utf-8")
     return artifacts

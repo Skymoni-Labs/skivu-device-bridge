@@ -1,135 +1,130 @@
-# MVP API 协议 v0.4
+# API reference v0.4
 
-## 接入与身份
+**English** | [简体中文](api.zh-CN.md)
 
-监听 IPv4 `0.0.0.0:8443`，使用明文 HTTP，不生成证书、不要求指纹校验。端口沿用 8443，所有入口改用 `http://`。配对授权、Bearer token 和撤销机制保留。
+## Access and identity
 
-### 配对请求 → 手机批准 → 领取凭证
+The server listens on IPv4 `0.0.0.0:8443` using **plain HTTP**. It does not generate certificates or check certificate fingerprints. Pairing, Bearer authorization, and revocation remain required.
 
-以下是原生客户端内部协议。AI 使用 MCP stdio 的 `phoneuse_connect`，无需直接处理领取秘密或 token。已完成的授权无会话期限，App/服务重启后仍有效；关闭连接不解除配对。
+### Request pairing → approve on the phone → claim credentials
 
-旧的 `POST /pair` 和配对码输入流程已移除；已有客户端凭证仍有效。
+This is the native-client protocol. AI clients should use the stdio bridge's `phoneuse_connect` instead of handling secrets. Completed authorization has no session expiry and survives app/service restarts. Closing a connection does not unpair. The old `POST /pair` and code-entry flow have been removed.
 
-1. `POST /pair/request`，正文 `{"client_name":"laptop"}`，无须 Bearer token。HTTP 202 返回：
+1. Send `POST /pair/request` with `{"client_name":"laptop"}`, without Bearer authorization. HTTP 202 returns:
 
    ```json
-   {"pairing_id":"UUID","pairing_secret":"随机秘密","verification_code":"123456","status":"pending","expires_in":120,"poll_interval":2}
+   {"pairing_id":"UUID","pairing_secret":"RANDOM_SECRET","verification_code":"123456","status":"pending","expires_in":120,"poll_interval":2}
    ```
 
-2. 手机 App 显示客户端自报名称、实际来源 IP、核对码和剩余时间。用户核对两端核对码，选择授权或拒绝。没有远程批准接口；通知栏提示点击打开 App。
-3. 客户端每两秒 `POST /pair/status`，正文 `{"pairing_id":"UUID","pairing_secret":"随机秘密"}`。HTTP 200 返回 `{"status":"pending"}` 或 `{"status":"denied"}`。批准后返回：
+2. The phone shows the client-supplied name, actual source IP, verification code, and remaining time. The user compares codes and approves or denies locally. There is no remote approval endpoint; the notification opens the app.
+3. Poll `POST /pair/status` every two seconds with `{"pairing_id":"UUID","pairing_secret":"RANDOM_SECRET"}`. HTTP 200 returns `{"status":"pending"}`, `{"status":"denied"}`, or, after approval:
 
    ```json
    {"status":"approved","client_id":"UUID","token":"TOKEN","token_type":"Bearer","api_path":"/api","mcp_path":"/mcp"}
    ```
 
-4. 此 token 可同时用于 API 和 MCP 的 `Authorization: Bearer TOKEN`。
+4. Use `Authorization: Bearer TOKEN` for both API and MCP calls.
 
-请求从创建起两分钟过期（批准不延长），过期或服务重启返回 `PAIRING_EXPIRED`。`pairing_secret` 是领取凭证的秘密，不能用核对码代替，也不能写入 URL。为允许丢包后的重复领取，同一请求在过期前返回相同凭证，不会重复签发。仅 token 摘要持久化；完整配对响应仅暂存在内存。关闭服务清空请求，已配对凭证仍保留。
+Requests expire two minutes after creation; approval does not extend that time. Expiry or service restart returns `PAIRING_EXPIRED`. The `pairing_secret` is required to claim credentials; the verification code cannot replace it, and secrets must not be placed in URLs. Repeated claims before expiry return the same credential. Only token digests are persisted; full pairing responses remain temporarily in memory. Stopping the service clears pending requests but preserves completed authorization.
 
-最多保留 16 个请求和 16 个客户端；新请求全局间隔至少五秒，超限 HTTP 429 / `PAIRING_BUSY`。错误 secret 返回 `PAIRING_DENIED`，参数错误返回 `INVALID_ARGUMENT`。手机可撤销单个凭证，撤销也会清除该请求暂存的 token，当前控制者被撤销时排队输入失效。备份和设备迁移不包含凭证。
+Limits: 16 pairing requests, 16 clients, and at least five seconds between new requests globally. Exceeding the limit returns HTTP 429 / `PAIRING_BUSY`. An incorrect secret returns `PAIRING_DENIED`; invalid parameters return `INVALID_ARGUMENT`. Revoking a client clears its temporary token response and invalidates its queued inputs. Credentials are excluded from backup and device migration.
 
-### Web 入口与传输
+### Web endpoints and transport
 
-`GET /` 是不含凭证和设备数据的公开页面，允许从 App/其他页面跳转（包括 `Sec-Fetch-Site: cross-site`），仍校验 Host；脚本、配对和 API 请求继续使用同源策略。页面禁止被嵌入 frame。
+`GET /` serves a public console without credentials or device data. Navigation from another page, including `Sec-Fetch-Site: cross-site`, is allowed, subject to Host validation. Scripts, pairing, and API requests retain same-origin checks. Framing is forbidden. `GET /app.js` is public; authenticated `GET /api/tools` returns `{"tools":[...]}` using the same parameter definitions as MCP `tools/list`.
 
-`GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
+API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `http://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
 
-API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `http://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with the same request parameters. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. HTTP means it cannot use Secure. JavaScript does not read the long-term credential.
 
-浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，请求参数与原生配对接口一致。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。当前使用 HTTP，因此不设置 Secure。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
+- `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates and renews or clears the cookie without issuing a new identity.
+- `POST /browser/session`: authenticated Bearer or cookie plus `{}` exchanges the same identity for a persistent cookie. Old open tabs use it to migrate and delete the old sessionStorage token.
+- `POST /browser/forget`: authenticated `{}` revokes the client, clears its cookie and cached pairing response, and invalidates queued inputs. Closing the page does not call it.
 
-- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权并续期/清除 Cookie，不签发新身份。
-- `POST /browser/session`：携带已有 Bearer 或 Cookie，正文 `{}`，换成同一身份的持久 Cookie。用于旧版打开标签页的自动迁移，成功后删除 sessionStorage 中的旧 token。
-- `POST /browser/forget`：需认证，正文 `{}`；撤销该客户端、清除 Cookie 与配对暂存响应，使排队动作失效。关闭页面本身不调用此接口。
+The console checks connections at startup, focus, and network recovery. Failed startup session reads retry every five seconds while preserving pairing. Inputs never retry automatically. The console no longer exports long-term credentials; older exported configurations can still be used by Python.
 
-页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧导出配置仍可由 Python 使用。
+### Persistent AI connections
 
-### AI 的持久连接
+`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` can initialize before pairing or while offline. One bridge manages multiple devices. `phoneuse_connect` adds by address or reconnects by `device_id`; `phoneuse_list_devices` reports installation ID, name, model, Android version, address, online status, and emulator status. Every device call must specify `device_id`; there is no shared current device. Paired tools are exposed directly; `phoneuse_call` is a fallback for hosts that do not refresh their tool list.
 
-`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
+Public `GET /identity` returns `device_id/name/model/android_version/is_emulator/service_instance_id`. The installation UUID is independent of the address and local display name. Identity and pairing preferences are excluded from backup/migration. Before sending credentials, the bridge verifies the public device ID; it refuses to reuse a token for a different installation at the same address. Address changes must match saved identity. Legacy configurations without trusted IDs need new local approval. This prevents accidental device mismatch; plain HTTP does not authenticate a malicious network endpoint.
 
-`GET /identity` 无需凭证，返回 `device_id/name/model/android_version/is_emulator/service_instance_id`。App 安装级 UUID 与地址分离，名称可在手机本地修改；身份与配对偏好设置排除备份/设备迁移。桥接在发送认证请求前先验证公开设备 ID，地址对应其他安装时不发送旧 token。换地址重连也必须匹配已保存身份。旧配置缺少可信设备 ID 时需要重新在手机批准，不能只凭 IP 迁移凭证。此预检用于防止意外连错设备；当前明文 HTTP 不提供对恶意网络端点的身份认证。
+Pairing responses include device identity. Pending requests are persisted, and approved credentials are saved atomically. MCP results never return tokens or claim secrets. Devices have independent connections and locks; calls serialize per device and can run concurrently across devices. One offline phone does not block others. Observation IDs bind to a client, phone-service instance, and accessibility-service instance; cross-device, cross-client, and post-restart references are rejected.
 
-配对请求/领取结果含设备身份；未完成请求也持久保存，批准后原子保存凭证。MCP 结果不返回 token 或领取秘密。不同设备独立连接、锁与执行队列，可并行；同设备调用串行。单台离线不阻塞其他设备。观察 ID 同时绑定客户端、设备服务运行实例及无障碍服务实例，跨设备、跨客户端及重启后的引用拒绝执行。
+The bridge manages `~/.phoneuse.json`, including pending claims, without returning it to MCP. HTTP 401 clears revoked credentials and requests an explicit connect call. Network errors neither delete credentials nor initiate pairing or replay input. This storage does not isolate files from other processes using the same OS account. Each HTTP connection handles one request and closes without affecting authorization; connection pools and waiting queues are bounded.
 
-配置默认位于用户目录 `.phoneuse.json`，由桥接读写，不加入 MCP 返回；未完成配对也保存到该文件以便桥接重启后继续。401 清除已撤销凭证并提示显式调用连接工具；网络错误不删除凭证、不发起配对、不重放动作。手机仍未恢复时初始化与连接工具可用。此机制不隔离与桥接使用同一系统账户的文件访问权限。
+## JSON API
 
-每个连接只处理一个 HTTP 请求并关闭；HTTP 连接关闭不影响配对授权。连接池和等待队列有上限。
-
-## 普通 API
-
-`POST /api` 正文：
+Send `POST /api`:
 
 ```json
 {"tool":"observe","arguments":{"mode":"both","max_dimension":1280}}
 ```
 
-响应直接返回工具结果。设备错误使用 HTTP 200 和 `state/error`；鉴权、HTTP 格式错误使用对应 HTTP 错误码。所有动作参数名称和类型由 API/MCP 共用的 ToolCatalog 校验；未知字段拒绝。
+The response is the tool result. Device errors use HTTP 200 with `state/error`; authentication and malformed HTTP use appropriate HTTP errors. The shared ToolCatalog validates API/MCP names and types and rejects unknown fields.
 
-| 工具 | 参数 |
+| Tool | Arguments |
 | --- | --- |
-| get_capabilities | 无 |
-| get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
-| cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
-| observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 0（不等待）；max_attempts：1–3，默认 3；timeout_ms、wait_until、output、diagnostics、include_details、region、subtree 见下文 |
-| acquire_device | 可选 ttl_ms：1000–300000，默认 60000；续期必须携带当前 lease_id |
-| release_device | lease_id：释放本客户端的测试占用 |
-| list_apps | 无；仅列出系统允许发现且带启动入口的应用 |
-| wait_for_change | ui_version；timeout_ms：1–10000，默认 5000 |
-| tap | element_id，或 x/y |
-| long_press | element_id，或 x/y；坐标动作 duration_ms：500–5000，默认 600 |
-| swipe | points：2–64 个 {x,y}；duration_ms：1–5000，默认 600 |
-| scroll | element_id 或 region:{left,top,right,bottom}；direction |
-| input_text | observation_id、element_id、text、mode:replace/insert |
-| back / home / recents | 无额外参数 |
-| launch_app | package_name |
+| `get_capabilities` | None |
+| `get_status` | Optional `request_id`, restricted to this client's results; includes `paused`, `stopped`, `executing_request_id` |
+| `cancel` | Optional `request_id`; otherwise cancels all this client's unfinished inputs |
+| `observe` | `mode`: tree / screenshot / both (default); `max_dimension`: 320–2048, default 1280; `compact`: true; `stable_wait_ms`: 0–2000, default 0; `max_attempts`: 1–3, default 3; other fields below |
+| `acquire_device` | Optional `ttl_ms`: 1000–300000, default 60000; renewal requires current `lease_id` |
+| `release_device` | `lease_id` belonging to this client's reservation |
+| `list_apps` | None; only discoverable apps with a launch entry |
+| `wait_for_change` | `ui_version`; `timeout_ms`: 1–10000, default 5000 |
+| `tap` | `element_id`, or `x/y` |
+| `long_press` | `element_id`, or `x/y`; coordinate `duration_ms`: 500–5000, default 600 |
+| `swipe` | `points`: 2–64 `{x,y}` entries; `duration_ms`: 1–5000, default 600 |
+| `scroll` | `element_id` or `region:{left,top,right,bottom}`; `direction` |
+| `input_text` | `observation_id`, `element_id`, `text`, `mode:replace/insert` |
+| `back` / `home` / `recents` | No additional arguments |
+| `launch_app` | `package_name` |
 
-### 动作公共字段
+### Common action fields
 
-所有 `tap` 至 `launch_app` 输入动作必填 `request_id`。`request_id` 最多 128 字符。可选：
+Every input action from `tap` through `launch_app` requires `request_id` (up to 128 characters).
 
-- `observation_id`：关联设备、显示几何和目标引用；节点及坐标动作（tap/long_press/swipe/scroll/input_text）必填，导航/启动应用可选。
-- `expected_window_id`：预期的活动窗口。
-- `observe_after`：动作后附带新观察，默认 false。
-- `observation_options`：复用 `observe` 的观察参数；仅在 `observe_after:true` 或 `observe_on_rejection:true` 时允许。不是动作目标参数，不能包含 request_id、device_id 等字段。
-- `observe_on_rejection`：默认 false；在目标校验类错误已经终止且确认 `action_executed:false` 时，按需附带 `recovery_observation`。暂停、撤销、停止等读取限制仍生效，附带观察错误不会覆盖原动作错误。
-- `lease_id`：可选的开发者测试占用；设备有占用时必须匹配占用客户端和 ID。没有占用时可直接执行动作。
+- `observation_id`: required for node/coordinate actions (`tap/long_press/swipe/scroll/input_text`), optional for navigation and launch; associates device, display geometry, and target references.
+- `expected_window_id`: optional expected active window.
+- `observe_after`: default false; explicitly attaches a fresh observation.
+- `observation_options`: the same parameters as `observe`, allowed only with `observe_after:true` or `observe_on_rejection:true`. It cannot contain action/routing fields such as `request_id` or `device_id`.
+- `observe_on_rejection`: default false; attaches `recovery_observation` after a terminal target-validation rejection with confirmed `action_executed:false`. Pause, revocation, and stop restrictions still apply. Observation errors do not overwrite the action error.
+- `lease_id`: optional test reservation; when reserved, both client and ID must match. Unreserved devices allow direct actions.
 
-所有工具可携带 `device_id`、`service_instance_id`，由 HTTP 入口在分发前核验。桥接自动添加这两个保护字段，直连 API 可自行指定。所有工具结果及嵌套动作/观察结果包含 `device_id` 和 `service_instance_id`。地址不匹配返回 `DEVICE_MISMATCH`，服务实例不匹配返回 `STALE_OBSERVATION`，均明确 `action_executed:false`。
+Every tool accepts `device_id` and `service_instance_id` guards checked before dispatch. The bridge adds them automatically; direct API clients may supply them. All tool results and nested action/observation results include both IDs. Device mismatch returns `DEVICE_MISMATCH`; service-instance mismatch returns `STALE_OBSERVATION`, both with `action_executed:false`.
 
-节点与坐标不可混用。节点操作只使用节点明确支持的操作，不自动转成坐标点击。节点滚动支持 forward/backward；区域滚动支持 forward/down、backward/up、left/right，方向指内容浏览方向。文本最多 10000 字符，允许空串清空。
+Node and coordinate arguments cannot be mixed. Node actions use only explicitly supported operations, without coordinate fallback. Node scroll supports forward/backward; region scroll supports forward/down, backward/up, and left/right, referring to content browsing direction. Text is limited to 10000 characters; an empty string clears a field.
 
-`input_text` 直接重新验证所选编辑节点，不自动聚焦、点击、读回或等待页面。返回 `text_verified:false`，系统接受不表示文本已验证。AI 可独立观察检查文本，或显式请求附带观察。`replace` 使用 ACTION_SET_TEXT 替换全部内容。`insert` 读取现有文本和 selection，将选区替换为给定文本，再通过 ACTION_SET_TEXT 写入组合结果，并尝试恢复插入位置的光标。编辑节点标记 isShowingHintText 时，提示文字保留为 hint，输入内容视为空串；可读空串且系统选区为 (-1,-1) 时使用唯一插入位置 (0,0)。非空或不可读文本的未知选区、密码字段返回 ACTION_UNSUPPORTED。光标恢复是可选执行步骤：未声明 ACTION_SET_SELECTION 的编辑框仍可执行文本插入，但不尝试恢复光标。插入后 `cursor_restored` 表示 Android 是否接受光标恢复；null 表示无须恢复、节点未声明选区设置能力或取消后未尝试。它不是完整输入法，富文本、特殊编辑器和应用行为需要实机验证。
+`input_text` revalidates the selected editor but does not implicitly focus, tap, read back, or wait. It returns `text_verified:false`; independently observe or explicitly request an attached observation. `replace` uses ACTION_SET_TEXT for the entire field. `insert` reads current text and selection, substitutes the selected range, writes the combined value with ACTION_SET_TEXT, and attempts to restore the insertion cursor. A node marked isShowingHintText keeps its hint but is treated as empty input. Readable empty text with selection (-1,-1) uses (0,0). Unknown selection for nonempty/unreadable text, or a password field, returns ACTION_UNSUPPORTED. Cursor restoration is optional: a node without ACTION_SET_SELECTION can still insert. `cursor_restored` reports Android acceptance; null means unnecessary, unsupported, or not attempted after cancellation. Rich editors and app-specific behavior need device testing.
 
-## 观察与坐标
+## Observations and coordinates
 
-观察包含 device_id、service_instance_id、observation_id、ui_version、captured_at_ms（Unix 毫秒）、window_id、package_name、display、tree、screenshot，以及 collection_attempts。
+Results include `device_id`, `service_instance_id`, `observation_id`, `ui_version`, `captured_at_ms` (Unix milliseconds), `window_id`, `package_name`, `display`, `tree`, `screenshot`, and `collection_attempts`.
 
-- 坐标是默认显示器当前旋转方向下的**物理像素**，左上角为 (0,0)，包含系统栏和键盘区域。不是 dp，也不是裁剪后的应用坐标。
-- JPEG 默认长边不超过 1280，质量 80。返回宽高、scale_x/scale_y、offset_x/offset_y。
-- 映射：`screen_x = image_x * scale_x + offset_x`，y 同理。动作须传屏幕坐标。
-- 旋转值为 0/90/180/270。旋转或几何变化会使关联快照失效。
-- tree.elements 默认精简：过滤不可见、空边界、屏幕外及无有效内容/动作的节点，保留必要父子结构，以 parent_id 指向最近保留父节点。element_id 保留原始树路径，不能用数组序号代替。默认省略 enabled:true、visible:true 和为 false 的状态字段，可读编辑字段提供 selection。`output:"legacy"` 下 `compact:false` 返回完整的有界树和状态字段；decision 模式仍按其投影规则过滤节点和省略默认状态。CLI 与 MCP 使用同一服务端输出。legacy 模式的未命名 Android 动作以十进制 ID 表示。
-- Phone Use 自身的配对/授权界面不返回树内容，也不接受远程点击或文本操作（LOCAL_CONTROL_UI）；可通过 home/back/recents/launch_app 离开。仅支持默认显示器，其他显示器返回 DISPLAY_UNSUPPORTED。
-- 元素 ID 是快照内部路径，每个客户端最多保留八份快照，每份最长 30 秒；已缓存结构指纹总估算内存预算 4 MiB，不在快照缓存中保留截图。客户端只能淘汰自己的快照；预算不能容纳新快照时返回 BUSY、reason:snapshot_budget_exceeded，不挤掉其他客户端的有效引用。不能将元素 ID 当作永久 ID。
-- 最多采集 1500 个节点，深度最多 40，单个文本/描述截断至 1024 字符。password 文本不返回。节点指纹使用完整字段的摘要，不依赖截断文本。
-- 截图失败时 `screenshot.available=false`，附带原因和 Android 错误码；与 `tree.available=false` 分别报告。未请求的部分为 null。
-- 默认立即采集当前可用状态；只有显式 `stable_wait_ms>0` 才等待最多该时长的短暂安静（120 ms），不代表业务就绪。窗口/应用切换或显示几何改变引发有限重采；普通内容事件、持续动画和窗口清单暂不完整不使观察整体失败。无条件观察最多尝试 max_attempts 次；条件观察可在总预算内进行多轮。只重采观察，绝不重放动作。
-- 节点动作沿原路径找到候选，核验节点身份、目标字段、可见/可用状态及请求动作，不采集整页树、不比较祖先布局或容器子树。路径相同但节点已替换仍拒绝；目标文本、边界或可用状态改变仍需要重新选择。replace 忽略单纯选区变化；insert 匹配原文本和选区。
-- 坐标动作关联默认显示屏，保留引用归属、有效期、服务实例、显示尺寸/旋转和坐标范围检查。普通内容刷新、活动应用变化、输入法出现/消失和跨窗口路径不整体作废坐标；只有显式 expected_window_id 才要求指定活动窗口。Phone Use 自身窗口和通知中的本地控制按钮始终保护。
-- 不以 sibling 边界、绘制顺序、高层窗口重叠推断操作失败；AI 结合截图选择节点或坐标机制。系统拒绝如实返回，不自动重试、降级或选择其他目标。
-- 错误保持原 code，并补充 `error.reason`、可取得的 `snapshot_age_ms/snapshot_ui_version/current_ui_version/events`。区分过期、淘汰、客户端/实例变化、显示变化和目标缺失/替换/字段变化。动作前拒绝返回 `action_executed:false`；无法确认是否输入时该字段为 null。
+- Coordinates are **physical pixels** on the default display at its current rotation, from top-left (0,0), including system bars and the keyboard. They are neither dp nor cropped app coordinates.
+- JPEG uses quality 80 and defaults to a longest edge of 1280. Returned metadata includes width, height, `scale_x/scale_y`, and `offset_x/offset_y`. Convert with `screen_x = image_x * scale_x + offset_x`, likewise for y. Actions take screen coordinates.
+- Rotation is 0/90/180/270. Rotation or display-geometry changes invalidate associated snapshots.
+- Compact `tree.elements` filters invisible, empty, off-screen, and content/action-free nodes, keeping necessary structure. `parent_id` points to the nearest retained parent; `element_id` retains the original tree path, never an array index. Default states are omitted; readable editors include selection. `output:"legacy",compact:false` returns the full bounded tree and states; decision output still applies its projection rules. CLI and MCP use the same server output. Unnamed legacy Android actions use decimal IDs.
+- Phone Use's pairing/authorization UI exports no tree content and rejects remote clicks/text (`LOCAL_CONTROL_UI`); navigation/launch can leave it. Only the default display is supported (`DISPLAY_UNSUPPORTED` otherwise).
+- Each client retains at most eight snapshots for at most 30 seconds. Structural fingerprints have an estimated global 4 MiB budget; snapshots do not cache screenshots. Clients can evict only their own snapshots. Insufficient budget returns `BUSY`, `reason:snapshot_budget_exceeded` without evicting other clients' valid references. Element IDs are not permanent.
+- Collection is bounded to 1500 nodes, depth 40, and 1024 characters per exported text/description. Password text is omitted. Fingerprints use digests of full fields, not truncated exports.
+- Screenshot failure returns `screenshot.available=false` with a reason and Android code, independently of `tree.available`. Unrequested parts are null.
+- Default observation collects immediately. Only explicit `stable_wait_ms>0` waits up to that duration for 120 ms of quiet; quiet does not prove business readiness. Clear window/app/display changes trigger bounded recollection. Ordinary content events, animation, and temporarily incomplete window inventories do not invalidate the whole observation. Unconditional collection uses at most `max_attempts`; conditional collection can run multiple rounds within its total budget. Only observations are repeated, never actions.
+- Node actions find the candidate at the original path, checking identity, target fields, visibility, enabled state, and requested capability. They do not collect a full tree or compare ancestor layout/container subtrees. A replacement node at the same path is rejected. Changed text, bounds, or availability requires reselection. `replace` ignores selection-only changes; `insert` checks original text and selection.
+- Coordinate actions check ownership, expiry, service instance, display size/rotation, and range. Ordinary refreshes, app changes, keyboard visibility, and cross-window paths do not invalidate all coordinates. Only explicit `expected_window_id` requires that active window. Phone Use windows and local notification controls remain protected.
+- Sibling bounds, drawing order, and overlapping higher windows are not treated as proof of action failure. Clients choose nodes or coordinates using screenshots. System rejection is returned without retries, fallback, or automatic reselection.
+- Errors preserve their code and add `error.reason` and available `snapshot_age_ms/snapshot_ui_version/current_ui_version/events`, distinguishing expiry, eviction, ownership/instance changes, display changes, and missing/replaced/changed targets. Pre-input rejection reports `action_executed:false`; uncertain input reports null.
 
-界面事件异步到达，以上检查不能消除所有竞争条件。屏幕内容可在最终检查与系统动作之间变化。
+UI events arrive asynchronously. Content can change between final validation and Android input; these checks do not eliminate all races.
 
-### 条件观察与总预算
+### Conditional observation and total budget
 
-独立 `observe` 和动作 `observation_options` 接受同一组参数。`timeout_ms` 为 1–60000 毫秒，配置 `wait_until` 时默认 10000，未配置时默认 20000。预算覆盖安静等待、树采集、截图、一致性重采和条件检查；`stable_wait_ms`、`max_attempts` 只控制每轮采集，不代替总预算。独立观察可能超过动作的 15 秒同步窗口，CLI/Web 对独立观察使用 90 秒 HTTP 读取上限，为排队和返回留出余量；连接中断也不会重试输入。
+Standalone `observe` and `observation_options` accept the same fields. `timeout_ms` is 1–60000, default 10000 with `wait_until`, otherwise 20000. It covers quiet waits, tree collection, screenshots, consistency recollection, and conditions. `stable_wait_ms` and `max_attempts` control each round, not the total budget. CLI/Web allow 90 seconds for standalone observation HTTP reads to accommodate queueing and return time. Disconnections do not retry input.
 
-`wait_until` 至少包含 `package_name` 或 `element`；所有给出的字段按 AND 组合。包名只确认当前应用，不能证明业务页面已完成加载。元素支持 `view_id`、`text`、`description` 精确匹配，至少提供其中一个；可同时要求 `visible`、`enabled`、`editable` 或 `action`。`action` 只允许 `tap`、`long_press`、`set_text`、`scroll_forward`、`scroll_backward`。条件不接受 element_id。
+`wait_until` requires `package_name` or `element`; supplied fields combine with AND. Package matching confirms the current app, not page readiness. Element matching requires at least one exact `view_id`, `text`, or `description`; optional `visible`, `enabled`, `editable`, or `action` add constraints. Allowed actions: `tap`, `long_press`, `set_text`, `scroll_forward`, `scroll_backward`. Conditions do not accept `element_id`.
 
-`element.match` 默认 `unique`，零匹配为未满足，多个匹配为歧义；仅等待某类节点出现时可指定 `exists`。条件基于完整的有界内部采集，在输出投影前判断；采集截断或子节点读取缺失时无法证明唯一性则报告 unknown，不能从局部树推断全局唯一。collection_complete 与 collection_truncated 分别报告完整性和采集边界，未截断也可能读取不完整。
+`element.match` defaults to `unique`: zero matches is unsatisfied; multiple matches is ambiguous. Use `exists` when any matching node suffices. Conditions run on the full bounded internal collection before output projection. If truncation or missing child reads prevents proving uniqueness, status is unknown. `collection_complete` and `collection_truncated` are independent; untruncated does not necessarily mean complete.
 
 ```json
 {
@@ -150,52 +145,52 @@ API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览�
 }
 ```
 
-观察结果分别表达：
+Result fields have separate meanings:
 
-- `condition.status`：satisfied / unsatisfied / ambiguous / unknown；`timed_out` 独立表示预算到期。还可包含 package_matched、match_count、match、element_ids、collection_truncated、collection_complete。未配置条件时不返回 condition。
-- `observation_status`：complete / condition_timeout / failed。complete 表示本轮采集和条件流程完成，仍须检查请求的 `tree.available`、`screenshot.available`；截图失败不会被误写成原动作失败。
-- `inconsistency_detected`、`collection_attempts`：报告本次流程检测到的不一致和采集次数；重采成功不抹去已检测到的不一致。
-- `failure_stage`：失败或超时发生阶段。采集失败时当前条件为 unknown；可附 `last_observation`，保留其原 captured_at_ms 与该次 condition。历史条件不代表当前条件。
+- `condition.status`: satisfied / unsatisfied / ambiguous / unknown; `timed_out` independently indicates budget exhaustion. May include `package_matched`, `match_count`, `match`, `element_ids`, `collection_truncated`, and `collection_complete`. Omitted when no condition was requested.
+- `observation_status`: complete / condition_timeout / failed. Complete still requires checking requested `tree.available` and `screenshot.available`. Screenshot failure does not rewrite the action as failed.
+- `inconsistency_detected`, `collection_attempts`: retain detected inconsistencies even if recollection succeeds.
+- `failure_stage`: failure/timeout stage. Collection failure makes the current condition unknown. Optional `last_observation` retains its original timestamp and condition; historical conditions are not current conditions.
 
-条件超时保留最后一次有效观察及 unsatisfied / ambiguous / unknown 判定，不能当作就绪；后续采集失败也不能直接当成条件未满足。动作执行事实、观察可用性和条件达成必须分别处理。稳定骨架屏、空树或重复目标不会自动满足唯一目标条件。
+Timeout retains the last valid observation and its unsatisfied/ambiguous/unknown condition; it is not readiness. A later collection failure is not simply an unsatisfied condition. Treat action execution, observation availability, and condition satisfaction separately. A stable skeleton, empty tree, or duplicate target cannot satisfy a unique-target condition.
 
-condition.element_ids 用于说明内部匹配结果；节点动作仍只能引用该观察 tree.elements 实际导出的节点。仅截图模式或范围投影可能不导出匹配节点，需要操作时请求包含该节点的树观察。
+`condition.element_ids` explains internal matches. Actions may reference only nodes actually exported in that observation's `tree.elements`; screenshot-only or scoped output may omit matching nodes. Request a tree containing the target before a node action.
 
-树和截图分别返回 started_at_ms / finished_at_ms 及 available；请求其中一项时不采集另一项作为替代。显式截图条件包含 element 或 subtree 时，内部按请求采集节点用于匹配，但不导出树。`elapsed_ms`、`wait_ms`、`collection_ms` 分别报告总耗时、明确等待耗时和采集处理耗时。
+Tree and screenshot separately report `started_at_ms`, `finished_at_ms`, and `available`. Requesting one does not collect the other as a substitute. Screenshot conditions using element/subtree may collect nodes internally without exporting a tree. `elapsed_ms`, `wait_ms`, and `collection_ms` separate total, explicit wait, and collection processing time.
 
-`diagnostics:true` 返回采集 started_at_ms、finished_at_ms，以及有界 captures 中的前后窗口、包名、ui_version、时点和 inconsistency_reason；`capture_diagnostics_truncated` 表示诊断列表截断。`consistency_scope` 说明检查范围。这些检查不承诺截图与树具有同帧原子性。
+`diagnostics:true` adds collection timestamps and bounded `captures` with before/after windows, package, ui_version, timing, and `inconsistency_reason`. `capture_diagnostics_truncated` marks truncation; `consistency_scope` describes the checks. Tree/screenshot collection is not frame-atomic.
 
-### 决策输出与范围
+### Decision output and scope
 
-`output` 默认 `decision`；需要旧格式时显式传 `output:"legacy"`。`output:"decision"` 只改变对外树投影，保留节点路径 element_id、必要的 parent_id、内容、边界、真实支持的动作及影响操作的状态。仅有 hint、error、state_description 的节点也可保留。默认省略 class、view_id 和未命名动作；`include_details:true` 展开 class、view_id、raw_actions。未知 Android 动作不会被当作可执行动作。
+`output` defaults to `decision`; explicitly use `legacy` for the older format. Decision projection keeps path IDs, necessary parents, content, bounds, supported actions, and states affecting interaction. Hint/error/state-description-only nodes may remain. Class, view ID, and unnamed actions are omitted by default; `include_details:true` adds `class`, `view_id`, and `raw_actions`. Unknown Android actions are not advertised as executable.
 
-精简布尔状态按 `tree.state_defaults` 解读：enabled、visible 默认为 true；editable、password、focused、checkable、checked、selected、content_invalid 默认为 false。节点输出其偏离默认值的状态。省略字段不能被误读为缺少编辑能力或与默认值相反的状态。
+Interpret omitted states using `tree.state_defaults`: `enabled/visible` default true; `editable/password/focused/checkable/checked/selected/content_invalid` default false. Nodes report deviations; omission is not an opposite value or an absence of capability.
 
-`region:{left,top,right,bottom}` 使用显示器物理像素，保留与区域相交的节点；`subtree:{observation_id,element_id}` 使用同客户端的原快照定位子树，读取前必须重新验证目标，不能直接套用旧路径。两者可共同限制输出，不缩小内部采集范围，也不裁剪截图。导出的节点仍受原观察、设备/显示和目标校验约束。
+`region:{left,top,right,bottom}` keeps intersecting nodes in physical display pixels. `subtree:{observation_id,element_id}` locates and revalidates a subtree using this client's prior snapshot; an old path alone is insufficient. Both may constrain output together, but neither reduces internal collection nor crops the screenshot. All exported references retain observation/device/display/target checks.
 
-`tree.collection_truncated`（兼容字段 truncated）表示采集达到边界；`collection_complete` 还检查子节点读取是否缺失；`scope_clipped` 表示请求了范围投影；`collected_nodes`、`output_nodes` 分别为内部采集和导出节点数，`output_bytes` 仅为 elements JSON 的 UTF-8 字节数。客户端展示截断应另行记录，不能混同这两种服务端限制。输出减小不代表截图成本消失。
+`tree.collection_truncated` (compatibility alias `truncated`) means a collection bound was reached. `collection_complete` also accounts for missing child reads. `scope_clipped` means scoped projection was requested. `collected_nodes/output_nodes` count internal/exported nodes; `output_bytes` counts only the elements JSON's UTF-8 bytes. Client display truncation is separate. Smaller text output does not remove screenshot costs.
 
-### 显式聚焦后输入
+### Explicit focus before text input
 
-若截图显示输入区域、但当前树没有可编辑节点，应使用当前截图映射坐标显式聚焦，再用新观察确认编辑能力。示例坐标和节点 ID 必须替换成现场观察结果：
+If the screenshot shows an input area without an editable node, explicitly focus using current screenshot coordinates, then observe again. Replace all illustrative IDs, coordinates, and app identifiers below with actual observations:
 
-1. `observe {"mode":"both","output":"legacy","compact":false,"include_details":true}`，保存聚焦前的完整有界树与截图。
-2. `tap {"request_id":"focus-001","observation_id":"BEFORE_ID","x":320,"y":240,"observe_after":true,"observation_options":{"mode":"both","output":"legacy","compact":false,"wait_until":{"element":{"view_id":"com.example.shop:id/search","editable":true,"enabled":true,"action":"set_text"}},"timeout_ms":5000}}`。
-3. 仅当新观察的 condition 为 satisfied，且树确认唯一节点可编辑并支持 set_text 时，调用 `input_text {"request_id":"type-001","observation_id":"AFTER_ID","element_id":"AFTER_ELEMENT_ID","text":"搜索词","mode":"replace"}`。
+1. `observe {"mode":"both","output":"legacy","compact":false,"include_details":true}`; retain the pre-focus tree and image.
+2. `tap {"request_id":"focus-001","observation_id":"BEFORE_ID","x":320,"y":240,"observe_after":true,"observation_options":{"mode":"both","output":"legacy","compact":false,"wait_until":{"element":{"view_id":"com.example.shop:id/search","editable":true,"enabled":true,"action":"set_text"}},"timeout_ms":5000}}`.
+3. Only after the new condition is satisfied and the tree confirms a unique editable node with set_text, use `input_text {"request_id":"type-001","observation_id":"AFTER_ID","element_id":"AFTER_ELEMENT_ID","text":"search text","mode":"replace"}`.
 
-聚焦前后分别保存树，不能仅凭外观推断编辑能力。条件超时或编辑节点仍不明确时，独立 observe 后重新决策；不重放聚焦动作，也不自动改写为坐标输入。
+Do not infer editability from appearance. If the condition times out or the editor remains unclear, observe independently and decide again; do not replay focus or invent coordinate text input.
 
-## 授权、执行与去重
+## Authorization, execution, and deduplication
 
-配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
+Paired clients can submit input directly without acquiring control. Actions and immediate reads share one device queue (at most 32 queued requests); change waits do not occupy it. Reads require authentication. While paused, observation/app listing/waits are rejected, while status and capabilities remain available.
 
-连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。本地暂停、停止和撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
+Optional `acquire_device` reserves a device for up to five minutes for testing. A new reservation cannot be created while actions are unfinished. During it, input from another client or without the correct ID returns `DEVICE_RESERVED`. Old IDs after expiry/release return `LEASE_EXPIRED`. Validation happens at queue admission and before Android input, so expired queued actions do not execute. Reservations do not restrict reads or change pairing. Local pause, stop, or revocation clears the reservation; injected input may finish. `get_status.reservation` reports state and remaining time without disclosing the ID.
 
-授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
+Credentials remain valid until revoked. Pause blocks new operations and cancels queued input; resume permits new actions without replay. Process/service restart does not replay requests and still requires authorization.
 
-普通动作默认只执行一次并返回执行事实，不固定延时、不采集动作后树或截图；观察缺省是正常成功结果。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+Default actions execute once and return execution facts, without fixed delays or post-action trees/screenshots. Missing observation is a normal success result. `observe_after:true` explicitly attaches observation; waiting must also be requested in `observation_options`. The client decides the sequence and may reuse a valid reference; observing after every action is not mandatory.
 
-动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
+Actions wait synchronously for up to 15 seconds, then return `accepted` (queued) or `executing`. Continue querying `get_status`; neither means success. Executed input still waiting on observation reports `state:"executing"`, `action_executed:true`, `observation_status:"observing"` at the top level and in `get_status.request`. `observation_purpose` distinguishes after_action / after_rejection. These observation fields are omitted if none was requested. `accepted` with `action_executed:false` means not executed yet, not a terminal rejection.
 
 ```json
 {
@@ -206,42 +201,46 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 }
 ```
 
-- executed：Android 接受节点/导航/Intent 操作，或报告手势完成。不会声称业务成功。
-- failed：校验或系统明确拒绝，含 error.code/message。
-- cancelled：尚未执行的输入被取消或控制已失效。
-- unknown：手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
+Terminal states:
 
-执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因通知暂停而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
+- `executed`: Android accepted a node/navigation/Intent action or reported gesture completion; business success is not claimed.
+- `failed`: validation or explicit system rejection, with `error.code/message`.
+- `cancelled`: unexecuted input was cancelled or authorization/control became invalid.
+- `unknown`: gesture callback timeout, partial cancellation, or an exception leaves execution uncertain. Re-observe; do not automatically retry.
 
-`recovery` 是有限类别的建议对象，包含 category、advisory:true、replay_action:false、suggested_tool 和 message，不保证下一次操作成功。排队/执行中使用 wait_original_request；unknown 使用 reconcile_result；终态未执行的目标错误、执行后观察失败或条件超时使用 refresh_observation。先区分请求是否终止，再决定观察或查询原请求；不根据 action_executed:false 单独创建替代动作。恢复观察位于 recovery_observation，失败可再嵌套 last_observation。CLI/Web 递归识别这些层级，截图附件标明来源，历史截图不改变当前条件或错误。
+Post-action observation failure/timeout preserves `executed`; observation reports its own state/error. An unmet condition must block steps depending on it. Pause cannot retroactively revoke injected input. `cancel` reports `in_flight_may_complete`; immediate gesture termination is not guaranteed.
 
-窗口信息只作按需诊断（`diagnostics:true` 下的 windows），不要求活动应用覆盖全屏，也不需要客户端先选择输入法窗口。版本和事件历史用于解释变化，不是整页必须不变的前置条件。
+`recovery` is advisory: `category`, `advisory:true`, `replay_action:false`, `suggested_tool`, and `message`. Pending requests use `wait_original_request`; unknown uses `reconcile_result`; terminal unexecuted target errors and post-action observation failures/timeouts use `refresh_observation`. Determine terminal state before replacing an action; `action_executed:false` alone is insufficient. Recovery observations use `recovery_observation` and may nest `last_observation`. CLI/Web identify image provenance recursively; historical images do not change current conditions/errors.
 
-去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。
+Window inventory is optional diagnostics (`diagnostics:true`), not a requirement that the app fill the screen or that clients select the keyboard window. Versions and event history explain changes without imposing whole-page stability.
 
-若已执行动作的附带观察使结果超过剩余保留预算，该观察会替换为 `observation_status:"failed"`、`error.code:"CACHE_BUDGET_EXCEEDED"`、`omitted_for_retention:true`，保留原动作 state、action_executed 及原始错误。不能因此再次发送原动作。
+Deduplication scope is **client_id + request_id in the current service process**. Tool and arguments must match exactly, ignoring object-key order. Results live for ten minutes, at most 256 IDs, with an approximately eight-million-character cache budget. A full cache rejects new actions instead of dropping unexpired IDs. Snapshots, images, and action arguments are memory-only and do not survive service stop/process death. The app writes no action log or screenshot files.
 
-若其余诊断仍超过预算，结果标记 `diagnostics_omitted_for_retention:true`，省略详细窗口/事件诊断和执行附加信息，保留原错误 code、reason、年龄/版本及执行确认字段；execution 标记 `details_omitted_for_retention:true`。过长的平台错误消息会截短并标记 `message_truncated_for_retention:true`。这些裁剪不改变动作状态或执行事实，也不会单因诊断裁剪而将观察标为失败。
+If attached observation exceeds retention budget after execution, it becomes `observation_status:"failed"`, `error.code:"CACHE_BUDGET_EXCEEDED"`, `omitted_for_retention:true`; original action state, execution fact, and error remain. Never replay input because of this.
 
-重发相同 ID 返回已有结果，不再次输入，也不重新开展附带观察；不同参数返回 REQUEST_ID_CONFLICT。缓存观察的采集时间和有效期不会刷新，需要新观察时独立调用 observe。十分钟之后或进程重启后不能依据去重保证安全重放。客户端必须自行保留不确定请求，并重新观察。
+If remaining diagnostics are too large, `diagnostics_omitted_for_retention:true` removes detailed window/events and execution extras while preserving error code/reason, age/version, and confirmation. Execution marks `details_omitted_for_retention:true`; long platform errors may be shortened with `message_truncated_for_retention:true`. These cuts do not change execution facts or alone turn an observation into a failure.
 
-通知提供暂停/恢复和停止服务。暂停使排队输入失效，恢复不会重放已取消动作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
+An identical ID returns its cached result without new input or observation; different arguments return `REQUEST_ID_CONFLICT`. Cached observation timestamps/expiry do not refresh. Use standalone observe for new data. After ten minutes or process restart, deduplication cannot guarantee safe replay; clients must retain uncertain requests and reconcile with fresh observation.
 
-## 主要错误码
+Notifications provide pause/resume and stop. Revocation rejects that client's subsequent reads/writes and cancels its queued input without affecting others. Stop closes HTTP and invalidates all unexecuted input.
 
-INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、OBSERVATION_TIMEOUT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
+## Main error codes
+
+`INVALID_ARGUMENT`, `UNKNOWN_TOOL`, `UNAUTHORIZED`, `PAUSED`, `STOPPED`, `CANCELLED`, `BUSY`, `DEVICE_MISMATCH`, `DEVICE_RESERVED`, `LEASE_EXPIRED`, `REQUEST_ID_CONFLICT`, `REQUEST_NOT_FOUND`, `ACCESSIBILITY_UNAVAILABLE`, `SCREEN_OFF`, `DEVICE_LOCKED`, `NO_ACTIVE_WINDOW`, `OBSERVATION_INCONSISTENT`, `OBSERVATION_TIMEOUT`, `STALE_OBSERVATION`, `STALE_ELEMENT`, `WINDOW_MISMATCH`, `ELEMENT_UNAVAILABLE`, `ACTION_UNSUPPORTED`, `ACTION_REJECTED`, `APP_UNAVAILABLE`, `RESULT_UNKNOWN`.
+
+`OBSERVATION_INCONSISTENT` describes collection changes, `STALE_OBSERVATION` invalid action context, and `STALE_ELEMENT` a changed target. These remain distinct for diagnostics and batch summaries.
 
 ## MCP
 
-`POST /mcp` 使用 JSON-RPC 2.0。支持 initialize、ping、tools/list、tools/call、无响应的通知；不支持批处理。每个工具使用同一套执行代码。notifications/initialized 返回 HTTP 202；通知永远不会触发工具动作。
+`POST /mcp` uses JSON-RPC 2.0 and supports initialize, ping, tools/list, tools/call, and notifications without responses. JSON-RPC batches are unsupported. Tools use the same execution code as the API. `notifications/initialized` returns HTTP 202; notifications never trigger tool actions.
 
-这是无服务端 MCP 会话的 Streamable HTTP POST/JSON 模式，不返回 Mcp-Session-Id。GET/DELETE 返回 405，无 SSE 推送。MCP 版本为 2025-03-26、2025-06-18 或 2025-11-25；缺省头兼容早期版本。2026-07-28 的无 initialize 协议暂不支持。
+Streamable HTTP uses stateless POST/JSON, without `Mcp-Session-Id`. GET/DELETE return 405; there is no SSE. Supported versions are 2025-03-26, 2025-06-18, and 2025-11-25; absent headers support older compatibility. The 2026-07-28 protocol without initialize is not implemented.
 
-tools/call 结果为 text 内容块；观察中的图片另作为 image 内容块，包括 request、observation、recovery_observation、last_observation 内的截图。文本保留截图映射、来源层级与原采集时间，去除重复的 data_base64。工具错误、观察失败、条件未满足及请求的树/截图不可用通过 isError 表示，原动作执行事实仍保留；accepted/executing 中的 observing 本身不表示错误，仍须查询原请求。MCP JSON-RPC 的 id 不是动作去重 ID；仍须传 arguments.request_id。用 cancel 工具取消动作；通用 JSON-RPC 取消通知不直接撤销设备输入。
+`tools/call` returns text blocks and separate image blocks for screenshots, including those nested in `request`, `observation`, `recovery_observation`, and `last_observation`. Text retains mapping, provenance, and original timestamps but removes duplicate `data_base64`. `isError` reports tool errors, observation failure, unmet conditions, or unavailable requested tree/image, while preserving action execution facts. Pending `observing` is not itself an error; query the original request. JSON-RPC `id` is not an action deduplication ID: `arguments.request_id` is still required. Use the `cancel` tool; generic JSON-RPC cancellation notifications do not directly revoke input.
 
-### 桥接批量测试
+### Bridge batch testing
 
-`phoneuse_batch` 接收 1–100 个显式调用，示例：
+`phoneuse_batch` accepts 1–100 explicit calls:
 
 ```json
 {
@@ -255,15 +254,15 @@ tools/call 结果为 text 内容块；观察中的图片另作为 image 内容�
 }
 ```
 
-同设备按输入顺序执行，不同设备并行；结果恢复为输入顺序。可在每项 arguments 中传 lease_id，也可使用该项顶层 lease_id。默认某设备步骤失败、结果未知、仍执行中、条件未满足/歧义/未知、请求的树或截图不可用、缺少请求的附带观察时，跳过该设备后续步骤，其他设备继续。get_status 按嵌套 request 判定；last_observation 的历史条件不能使失败的新观察变成就绪。需要在失败后继续的独立测试可显式设置 continue_on_error；不会重试已发送动作。
+Execution is sequential per device and parallel across devices; results retain input order. Supply `lease_id` in each entry's arguments or at its top level. By default, failure, unknown/pending execution, unsatisfied/ambiguous/unknown conditions, unavailable requested tree/image, or missing requested attached observation skips later calls on that device. Other devices continue. `get_status` is evaluated through its nested `request`; historical `last_observation` cannot make a failed current observation ready. `continue_on_error` permits independent tests to continue, without retrying sent actions.
 
-summary 包含 total、succeeded、failed、pending、unknown、skipped，以及 states、error_codes、observation_error_codes；新增 observation_incomplete（观察未完成的调用数）、observation_statuses、condition_statuses。附带观察失败的已执行动作仍保留 succeeded 的兼容计数，并另计 observation_incomplete，不能把 succeeded 当业务成功率。condition_statuses 统计当前观察与恢复观察，不以历史 last_observation 改写当前条件。观察错误覆盖嵌套恢复观察。MCP 批量结果在 observation_incomplete 非零时也标记 isError。
+`summary` includes `total`, `succeeded`, `failed`, `pending`, `unknown`, `skipped`, `states`, `error_codes`, `observation_error_codes`, `observation_incomplete`, `observation_statuses`, and `condition_statuses`. Executed actions with failed observations retain the compatibility `succeeded` count and also increment `observation_incomplete`; succeeded is not a business success rate. Condition counts use current/recovery observations, not historical conditions. Observation errors include nested recovery results. MCP sets `isError` when observation_incomplete is nonzero.
 
-summary_only 省略逐项结果；批量结果不携带任何层级的截图 base64。CLI 的 `batch @calls.json` 读取上述 calls 数组，`--summary-only` 与 `--continue-on-error` 对应同名选项。`call ... --screenshot-out PATH` 可从嵌套请求、恢复观察或 last_observation 保存最新有数据的截图，并返回 screenshot_output_source 与 saved_path；图片保存失败不会抹去已执行动作结果。
+`summary_only` omits individual results. Batch output excludes screenshot base64 at every depth. CLI `batch @calls.json` reads the calls array; `--summary-only` and `--continue-on-error` correspond to these options. `call ... --screenshot-out PATH` saves the newest available image from nested requests/recovery/history and reports `screenshot_output_source` and `saved_path`. Image-save failure does not erase action results.
 
-## 实现参考
+## Implementation references
 
 - [Android AccessibilityService](https://developer.android.com/reference/android/accessibilityservice/AccessibilityService)
-- [Android 前台服务类型](https://developer.android.com/develop/background-work/services/fgs/service-types)
-- [Android 17 局域网权限](https://developer.android.com/about/versions/17/behavior-changes-17)
+- [Android foreground service types](https://developer.android.com/develop/background-work/services/fgs/service-types)
+- [Android 17 local network permission](https://developer.android.com/about/versions/17/behavior-changes-17)
 - [MCP 2025-03-26 Streamable HTTP](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports)

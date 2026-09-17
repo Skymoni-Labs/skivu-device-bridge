@@ -1,98 +1,112 @@
-# 将 Phone Use 导入 AI
+# Connect Phone Use to an AI client
 
-用户无需手动下载、解压 ZIP。Skill 使用 `skills add`，MCP 使用 `npx` 自动获取并启动桥接。
+**English** | [简体中文](integrations.zh-CN.md)
 
-两者都需要本机 Python 3.10+，在线安装请使用 Node.js 22.20+（含 npm/npx，满足当前 Skills CLI 要求；MCP 启动器本身支持 Node.js 18+）；从 GitHub 获取包还需要 Git。手机启动 Phone Use 并开启无障碍，电脑能访问手机 IPv4，首次连接由用户在手机批准。截图和控制使用局域网明文 HTTP，不提供云端中继。
+Install the Skill with `skills add`, or run the MCP bridge with `npx`. Neither requires manually downloading a ZIP.
 
-下列 GitHub 命令读取 `nidhoggfgg/PhoneUse` 的默认分支，仓库必须对使用者可访问。当前方案无需注册 npm 包；`@nidhoggfgg/phone-use` 是包内名称，不代表已发布到 npm registry。
+Both integrations need Python 3.10+. For online installation, use Node.js 22.20+ with npm/npx and Git. The MCP launcher itself supports Node.js 18+. Start the service on the phone, enable accessibility for device operations, and make sure the client can reach the phone's IPv4 address. Initial pairing requires approval on the phone. Transport is plain HTTP over your network; there is no cloud relay.
 
-## 方式一：安装 Skill
+The GitHub commands below fetch `nidhoggfgg/PhoneUse` from its default branch, so the repository must be accessible. `@nidhoggfgg/phone-use` is the package's internal name, not a claim that it is published to the npm registry.
+
+## Option 1: Agent Skill
 
 ```sh
 npx skills add nidhoggfgg/PhoneUse --skill phone-use
 ```
 
-按提示选择 AI 客户端和项目/全局安装范围。安装器会一起安装 SKILL.md、Python 脚本与接口参考，无需克隆项目、运行构建或额外安装 MCP。
+Choose your AI client and project or global scope. The installation includes instructions, the Python client, and API references. No Android build or separate MCP installation is needed on the client machine.
 
-让 AI 代为安装时，可明确客户端和范围。例如为 Codex 全局安装：
+For a global Codex installation:
 
 ```sh
 npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --global --yes
 ```
 
-第一个 `--yes` 允许 npx 获取安装器，第二个跳过安装器的交互选择。仅当前项目使用时去掉 `--global`；其他宿主可在交互流程选择。重新加载 Skill 后说：
+The first `--yes` lets npx fetch the installer; the second skips installer prompts. Omit `--global` for project scope. Other clients can be selected interactively. Reload Skills, then ask:
 
-> 使用 $phone-use 连接 http://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
+> Use $phone-use to connect to http://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
 
-可直接交给 AI 的安装指令：
+An installation request you can give an agent:
 
-> 请将 https://github.com/nidhoggfgg/PhoneUse 的 phone-use Skill 安装到当前 AI 客户端，使用 npx skills add，安装范围为当前项目。检查 Python 3.10+ 是否可用，保留其他已安装的 Skill。安装后连接我的手机 http://手机IPv4:8443，首次配对由我在手机批准。
+> Install the phone-use Skill from https://github.com/nidhoggfgg/PhoneUse for this AI client, using npx skills add with project scope. Check Python 3.10+ and preserve existing Skills. Then connect to my phone at http://PHONE_IPV4:8443; I will approve pairing on the phone.
 
-手机地址必须换成真实值；未提供时由 AI 询问。Skill 安装并不自动授权手机。
+Replace the example address. The agent should ask for it if unknown. Installing a Skill does not authorize access to a phone.
 
-## 方式二：安装 MCP
+## Option 2: MCP
 
-MCP 名称同样为 `phone-use`，使用以下命令启动：
+Configure the AI host to launch:
 
 ```sh
 npx -y --package=github:nidhoggfgg/PhoneUse phone-use
 ```
 
-通常由 AI 客户端启动这个命令，不需要用户长期打开终端。该进程通过 stdin/stdout 与宿主通信，手动运行后没有提示、等待输入是正常现象。启动器自动寻找 Python 3.10+，可通过环境变量 `PHONEUSE_PYTHON` 指定解释器的绝对路径；值只放路径，不附带参数。
+The host normally owns this process. Manually running it may appear idle because it is waiting for JSON-RPC on stdin. The launcher finds Python 3.10+ automatically. To choose an interpreter, set `PHONEUSE_PYTHON` to its absolute path, without arguments.
 
-### Codex 一条命令注册
+### Register with Codex
 
-macOS / Linux：
+macOS / Linux:
 
 ```sh
 codex mcp add phone-use -- npx -y --package=github:nidhoggfgg/PhoneUse phone-use
 ```
 
-Windows（通过 cmd 启动 npx.cmd）：
+Windows:
 
 ```powershell
 codex mcp add phone-use -- cmd /d /c npx -y --package=github:nidhoggfgg/PhoneUse phone-use
 ```
 
-如果没有 Codex CLI，或要调整启动/工具超时，可以先生成配置片段再由 AI 合并到 Codex 设置：
+Without the Codex CLI, or to configure timeouts, generate a snippet:
 
 ```sh
 npx -y --package=github:nidhoggfgg/PhoneUse phone-use print-config --host codex
 ```
 
-输出 `[mcp_servers.phone-use]` 段，已设置 120 秒启动及工具超时。合并到 `~/.codex/config.toml` 时同名段只保留一份；保留其他配置。首次拉取 GitHub 包可能超过宿主默认启动超时，可先运行上述 print-config 命令完成缓存。
+Merge the generated `[mcp_servers.phone-use]` section into `~/.codex/config.toml`, keeping only one section with that name and preserving other settings. It sets startup and tool timeouts to 120 seconds. Running `print-config` first also lets npm cache the package before the host starts it.
 
-### 其他 MCP 客户端
+### Other MCP clients
 
 ```sh
 npx -y --package=github:nidhoggfgg/PhoneUse phone-use print-config
 ```
 
-生成当前系统适用的 `mcpServers` JSON。让 AI 将 `phone-use` 条目合并到宿主配置（如 Claude Desktop 的开发者配置）。路径由 npx 管理，配置中无需填入下载目录或 Python 路径；Windows 自动生成固定的 cmd 调用参数。其他宿主如使用不同配置格式，应按其文档转换，不能直接覆盖原配置。
+This generates platform-specific `mcpServers` JSON, including the Windows `cmd` invocation. Merge the `phone-use` entry into a compatible host configuration; do not overwrite unrelated services. Hosts using other formats need the equivalent settings in their own format. npx manages the downloaded paths.
 
-可直接交给 AI 的安装指令：
+An installation request you can give an agent:
 
-> 请为当前 AI 客户端安装 Phone Use MCP，服务名 phone-use，启动命令为 npx -y --package=github:nidhoggfgg/PhoneUse phone-use。先检查 Node.js、Git 和 Python 3.10+；优先使用宿主的 MCP 添加命令，否则用该包的 print-config 生成片段并合并配置，保留其他服务。Windows 使用 cmd /d /c 启动 npx。完成后连接我的手机 http://手机IPv4:8443，配对由我在手机批准。
+> Install Phone Use MCP for this AI client as phone-use, using npx -y --package=github:nidhoggfgg/PhoneUse phone-use. Check Node.js, Git, and Python 3.10+. Prefer the host's MCP registration command; otherwise generate a snippet with print-config and merge it without removing other services. On Windows, launch npx through cmd /d /c. Connect to http://PHONE_IPV4:8443; I will approve pairing on the phone.
 
-### 首次连接
+### First connection
 
-重新加载宿主 MCP，让 AI 调用 `phoneuse_connect({"address":"http://手机IPv4:8443"})`。工具显示核对码，手机批准后再次调用 `phoneuse_connect({"device_id":"返回的ID"})` 完成领取。每次设备操作显式指定 device_id，之后自动沿用授权。
+Reload the host's MCP configuration. Ask the agent to call:
 
-可选启动参数：`--url http://手机IPv4:8443`、`--name "My AI"`、`--config /absolute/path/registry.json`。自定义参数应由宿主按独立参数传递；Windows 使用 cmd 时需按该 shell 的规则正确引用，普通安装无需添加这些参数，地址通过 phoneuse_connect 提供。
+```json
+{"address":"http://192.168.1.20:8443"}
+```
 
-MCP 支持 `2025-03-26`、`2025-06-18`、`2025-11-25`；未实现 2026 协议。Python 桥接返回原生截图图片块。手机离线时仍能初始化；长批量任务可拆分或提高宿主超时。
+with `phoneuse_connect`. Compare the verification code and approve on the phone. Then call `phoneuse_connect` again with `{"device_id":"RETURNED_DEVICE_ID"}` to finish claiming authorization. Every subsequent device call must explicitly include `device_id`.
 
-## 更新与凭证
+Optional startup arguments are `--url http://PHONE_IPV4:8443`, `--name "My AI"`, and `--config /absolute/path/registry.json`. Pass them as separate host arguments; Windows `cmd` requires its own quoting rules. Ordinary setup can omit them and supply the address through `phoneuse_connect`.
 
-Skill 可重新运行安装命令更新。MCP 的 GitHub 默认分支安装可能被 npm 缓存；需要可复现版本时，将 `github:nidhoggfgg/PhoneUse` 改成带实际发布 tag 或 commit 的 `github:nidhoggfgg/PhoneUse#引用`，升级时更改引用后重启宿主。不要填写不存在的 tag。
+The bridge supports MCP `2025-03-26`, `2025-06-18`, and `2025-11-25`, and returns screenshots as native image blocks. It can initialize while the phone is offline. After pairing, `notifications/tools/list_changed` announces device tools. If the host does not refresh, use `phoneuse_call` with `device_id`, `tool`, and `arguments`. Long batches may need a longer host timeout or smaller batches. The 2026 protocol is not implemented.
 
-默认 MCP 与 Skill 共用用户目录 `~/.phoneuse.json`；npx 缓存更新不会清除手机授权。如需分开授权，两边各用不同 `--config`。不要提交或分发该凭证文件。手机端可以随时撤销客户端。
+### Local checkout or direct HTTP
 
-云端 AI 如果不能执行本地程序或访问手机网络，安装成功后也无法控制手机。没有工具时先检查宿主是否支持 stdio MCP；无法操作时检查手机无障碍、锁屏和暂停状态。网络中断后应查询原 request_id，不自动重复动作。
+A checkout can run `python /absolute/path/tools/phoneuse_client.py mcp-stdio --url http://PHONE_IPV4:8443 --name "My AI"` as the host's stdio command.
 
-## 维护与离线包
+For programs that manage their own Bearer credentials, the phone also exposes `http://PHONE_IPV4:8443/mcp`. It supports Streamable HTTP POST/JSON without SSE. See the API reference in the repository for native pairing and transport details.
 
-`skills/phone-use/` 是完整可安装目录，所有依赖文件均在其内部。客户端和接口协议以 `tools/phoneuse_client.py`、`docs/api.md` 为源；修改后运行：
+## Updates and credentials
+
+Rerun the Skill installation command to update it. npm may cache GitHub default-branch packages. For reproducible MCP installs, replace `github:nidhoggfgg/PhoneUse` with `github:nidhoggfgg/PhoneUse#REF`, using an actual tag or commit. Change the reference and restart the host to upgrade; do not assume a release tag exists.
+
+MCP and Skill share `~/.phoneuse.json` by default. npm cache changes do not remove phone authorization. Use separate `--config` paths for separate credentials. Never commit or distribute the registry. Access can be revoked on the phone.
+
+A cloud host without local execution or a route to your phone cannot use this bridge directly. If tools are missing, check stdio MCP support. If actions fail, check accessibility, lock state, and pause state. After a network interruption, query the original `request_id`; do not replay uncertain input.
+
+## Maintenance and offline packages
+
+`skills/phone-use/` is self-contained. The canonical client and API documents live at `tools/phoneuse_client.py`, `docs/api.md`, and `docs/api.zh-CN.md`. After changing them:
 
 ```sh
 python tools/sync_skill.py
@@ -102,8 +116,8 @@ npm test
 npm pack --dry-run
 ```
 
-同步后的文件应一并提交，CI 会检查是否遗漏。npm 使用显式 files 列表，不打包 Android 工程、凭证或截图，也没有安装时构建脚本。
+Commit synchronized files together; CI checks for stale copies. npm uses an explicit file list and has no install-time build script. It excludes the Android project, credentials, and screenshots.
 
-仍支持 `python tools/export_integrations.py` 生成 `dist/integrations/phoneuse-mcp.zip`、`phone-use.zip`、说明及校验和，供离线分发。离线 MCP 包使用 `python configure.py --host json` 或 `--host codex` 生成绝对路径配置，移动目录后重新生成。
+`python tools/export_integrations.py` creates `dist/integrations/phoneuse-mcp.zip`, `phone-use.zip`, bilingual installation guides, and checksums. Offline MCP uses `python configure.py --host json` or `--host codex` to generate absolute paths; regenerate after moving the directory.
 
-安装格式参考：[Skills CLI](https://github.com/vercel-labs/skills#readme)、[npm exec / npx](https://docs.npmjs.com/cli/v11/commands/npm-exec/)、[Codex MCP](https://developers.openai.com/codex/mcp)。
+Format references: [Skills CLI](https://github.com/vercel-labs/skills#readme), [npm exec / npx](https://docs.npmjs.com/cli/v11/commands/npm-exec/), [Codex MCP](https://developers.openai.com/codex/mcp).
