@@ -16,3 +16,4 @@
 local.properties
 __pycache__/
 .phoneuse.json
+/dist/

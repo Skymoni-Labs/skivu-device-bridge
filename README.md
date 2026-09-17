@@ -93,6 +93,24 @@ python tools/phoneuse_client.py call get_status '{"request_id":"home-001"}' --de
 
 连续测试可调用 `acquire_device` 取得有期限的 lease_id，并在后续动作中携带它，最后调用 `release_device`。没有占用时照常直接操作；手机本地暂停/停止始终有效。批量调用可用 `batch @calls.json` 或 MCP 的 `phoneuse_batch`；每项显式提供 device_id、tool、arguments，同设备顺序执行、不同设备并行，分别汇总动作错误和附带观察错误。默认停止该设备在失败或未完成步骤之后的调用；`--summary-only` 只显示汇总。批量接口不做任务规划或动作重试。
 
+## AI 快速接入：MCP 与 Skill
+
+无需手动下载 ZIP。电脑需有 Node.js 22.20+（npm/npx）、Git、Python 3.10+，并能访问手机地址。下列命令从 GitHub 自动获取接入文件。
+
+**Skill**，安装时选择自己的 AI 客户端：
+
+```sh
+npx skills add nidhoggfgg/PhoneUse --skill phone-use
+```
+
+**MCP**，让 AI 客户端通过此命令启动：
+
+```sh
+npx -y --package=github:nidhoggfgg/PhoneUse phone-use
+```
+
+查看 [AI 导入指南](docs/integrations.md)，包含 Codex 一条命令注册、其他宿主配置生成，以及可直接交给 AI 的安装指令。首次连接在手机批准，之后自动携带授权。维护者仍可运行 `python tools/export_integrations.py` 生成离线 ZIP 包。
+
 ## MCP 接入
 
 AI 推荐使用 stdio 桥接，只配置手机地址，无需预先配对或填写 token：

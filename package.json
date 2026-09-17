@@ -1,0 +1,24 @@
+{
+  "name": "@nidhoggfgg/phone-use",
+  "version": "0.1.0",
+  "description": "Phone Use Android MCP stdio bridge",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nidhoggfgg/PhoneUse.git"
+  },
+  "bin": {
+    "phone-use": "bin/phone-use.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/phone-use.mjs",
+    "tools/phoneuse_client.py",
+    "docs/integrations.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/launcher.test.mjs"
+  }
+}
