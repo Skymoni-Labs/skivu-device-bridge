@@ -14,31 +14,34 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-37 build-tools;36.0.0'
-      - uses: gradle/actions/setup-gradle@v4
-      - name: Validate and test
+          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Validate release version
         env:
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python tools/release.py check --tag "$RELEASE_TAG"
-          python -m unittest discover -s tools -p 'test_*.py'
-          npm test
-          npm pack --dry-run
-          bash ./gradlew :app:assembleRelease :app:testDebugUnitTest :app:lintRelease --no-configuration-cache
-      - uses: actions/upload-artifact@v4
+        run: python tools/release.py check --tag "$RELEASE_TAG"
+      - name: Test Python integrations
+        run: python -m unittest discover -s tools -p 'test_*.py'
+      - name: Test Node launcher
+        run: npm test
+      - name: Validate npm package
+        run: npm pack --dry-run
+      - name: Build and check Android release
+        run: bash ./gradlew :app:assembleRelease :app:testDebugUnitTest :app:lintRelease --no-configuration-cache --stacktrace
+      - uses: actions/upload-artifact@v6
         with:
           name: unsigned-apk
           path: app/build/outputs/apk/release/app-release-unsigned.apk
@@ -50,18 +53,18 @@ jobs:
     timeout-minutes: 15
     environment: release
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.10'
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '25'
       - uses: android-actions/setup-android@v4
         with:
           packages: 'build-tools;36.0.0'
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: unsigned-apk
           path: unsigned
@@ -90,7 +93,7 @@ jobs:
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python tools/release.py bundle --tag "$RELEASE_TAG" --apk "$RUNNER_TEMP/PhoneUse.apk"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: release-assets
           path: dist/release/*
@@ -103,8 +106,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v7
         with:
           name: release-assets
           path: dist/release
