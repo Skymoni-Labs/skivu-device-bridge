@@ -13,6 +13,22 @@ node tools/test_web_console.cjs
 
 DeviceControllerTest 使用假的设备执行器，验证控制状态和请求可靠性，不宣称验证了 Android 无障碍操作。
 
+### 首页整理、设备名称与应用语言（2026-09-17）
+
+首页按本机、控制服务、连接与配对、已配对客户端分区；设备名默认展示为文字，旁边的修改按钮打开带保存/取消和输入校验的弹窗。原始型号、安装 ID 和协议路径按需展开。设置页提供跟随系统、中文和 English，切换后保留当前设置页面。
+
+默认名称优先读取系统设备名及厂商 `device_name` 设置，无法读取时回退到品牌/型号，模拟器不再显示构建编码。手动命名优先于自动名称，安装 ID 不变。系统接口不保证所有厂商都返回市场名称，本轮没有连接小米真机。
+
+应用语言使用 [Android 官方推荐的 AppCompat API](https://developer.android.com/guide/topics/resources/app-languages)，Android 11–12 自动保存语言，Android 13+ 与系统的应用语言同步。运行中的通知使用匹配语言的 Context；切换语言不重建控制服务或撤销配对。升级 Espresso 至 3.7.0 及 AndroidX Test JUnit 至 1.3.0，适配 Android 17 的输入与消息队列测试接口。
+
+新增 JVM 用例覆盖设备可读名称、厂商名称回退、非法系统名称及模拟器；新增真实 Compose UI 用例覆盖空名/超长名拒绝、取消不写入、中文名称保存、重建后持久、默认隐藏 ID、配对审批，以及语言切换/重开应用后保留暂停服务和有效凭证。页面状态轮询使用实际时间的 Handler，避免持续协程计时与 Compose 测试的动画时钟相互推进。
+
+截图保存在 `app/build/reports/ui-review/`，包含中英文首页和设置页，已检查布局。截图测试只临时移除测试 Activity 的安全窗口标志，并在 finally 中恢复；生产页面仍使用 FLAG_SECURE。
+
+Windows / JBR 25 / SDK 37：Debug 构建、78 项 JVM 测试、Pixel 8 / Android 17 模拟器的全部 27 项设备测试通过，0 失败、0 跳过；Lint 为 0 错误、28 条依赖更新/旧模板资源/API 提示。完整设备结果保存在 `app/build/reports/ui-full-regression-results.xml`，构建日志为 `app/build/ui-final-verification.log`。Android 11–12 的语言持久化和厂商可读设备名称仍需对应系统/真机验证。
+
+最终安装包再次通过构建、78 项 JVM 测试、Lint 和 2 项 UI 回归；日志为 `app/build/ui-package-verification.log`。
+
 ### 能力独立与执行层简化（2026-09-16，本轮）
 
 按 `.dev/design.md` 实现：动作默认不等待页面、不采集动作后树/截图；独立观察默认 `stable_wait_ms:0`、`output:decision`，只对明确的窗口/应用/显示变化有限重采。节点校验只读取所选目标；移除整页版本、祖先/容器摘要、sibling 几何和活动窗口区域门槛。全屏坐标支持输入法与系统 UI，保留显示/实例/引用归属及 Phone Use 本地控制保护。

@@ -2,6 +2,7 @@ package ai.nidhoggfgg.phoneuse.server
 
 import android.content.Context
 import android.os.Build
+import android.provider.Settings
 import ai.nidhoggfgg.phoneuse.core.fail
 import ai.nidhoggfgg.phoneuse.core.json
 import org.json.JSONObject
@@ -13,13 +14,23 @@ import java.util.UUID
 @android.annotation.SuppressLint("ApplySharedPref")
 class DeviceIdentity(context: Context) {
     private val preferences = context.getSharedPreferences("device_identity", Context.MODE_PRIVATE)
+    private val defaultName by lazy {
+        readableDeviceName(
+            systemName = runCatching { Settings.Global.getString(context.contentResolver, Settings.Global.DEVICE_NAME) }.getOrNull(),
+            // Some manufacturers, including MIUI versions, store the user-facing name here.
+            manufacturerName = runCatching { Settings.System.getString(context.contentResolver, "device_name") }.getOrNull(),
+            manufacturer = Build.MANUFACTURER,
+            model = Build.MODEL,
+            emulator = isEmulator(Build.FINGERPRINT, Build.MODEL, Build.PRODUCT, Build.HARDWARE)
+        )
+    }
     val id: String = synchronized(lock) {
         preferences.getString("device_id", null) ?: UUID.randomUUID().toString().also {
             if (!preferences.edit().putString("device_id", it).commit())
                 fail("STORAGE_ERROR", "Could not save device identity")
         }
     }
-    val name: String get() = preferences.getString("name", null) ?: Build.MODEL
+    val name: String get() = preferences.getString("name", null) ?: defaultName
 
     fun rename(value: String) {
         val normalized = value.trim()

@@ -10,6 +10,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
 import ai.nidhoggfgg.phoneuse.server.HttpServer
@@ -35,12 +36,13 @@ class PhoneUseService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification(getString(R.string.service_starting)), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(1, notification(getString(R.string.service_starting)))
+        val startingText = ContextCompat.getContextForLanguage(this).getString(R.string.service_starting)
+        if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification(startingText), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        else startForeground(1, notification(startingText))
     }
     private fun createNotificationChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
+            NotificationChannel(CHANNEL, ContextCompat.getContextForLanguage(this).getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
     }
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
@@ -116,21 +118,26 @@ class PhoneUseService : Service() {
         }
     }
     private fun updateNotification(force: Boolean = false) {
-        val text = getString(stateMessage())
-        val key = "$text:${::controller.isInitialized && controller.gate.paused}"
+        // AppCompat applies pre-Android 13 locales to activities only. Resolve notification
+        // resources explicitly so a running or independently restored service uses the same language.
+        val localized = ContextCompat.getContextForLanguage(this)
+        val text = localized.getString(stateMessage())
+        val key = "${localized.resources.configuration.locales.toLanguageTags()}:$text:${::controller.isInitialized && controller.gate.paused}"
         if (!force && notificationText == key) return
         notificationText = key
+        createNotificationChannel()
         getSystemService(NotificationManager::class.java).notify(1, notification(text))
     }
     private fun notification(text: String): Notification {
+        val localized = ContextCompat.getContextForLanguage(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         fun action(action: String, code: Int) = PendingIntent.getService(this, code, Intent(this, PhoneUseService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val paused = ::controller.isInitialized && controller.gate.paused
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_control)
-            .setContentTitle(getString(R.string.app_name)).setContentText(text).setContentIntent(open).setOngoing(true)
+            .setContentTitle(localized.getString(R.string.app_name)).setContentText(text).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .addAction(0, getString(if (paused) R.string.notification_resume else R.string.notification_pause), action(if (paused) RESUME else PAUSE, 1))
-            .addAction(0, getString(R.string.notification_stop), action(STOP, 3)).build()
+            .addAction(0, localized.getString(if (paused) R.string.notification_resume else R.string.notification_pause), action(if (paused) RESUME else PAUSE, 1))
+            .addAction(0, localized.getString(R.string.notification_stop), action(STOP, 3)).build()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
