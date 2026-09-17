@@ -1,4 +1,5 @@
 name: Release draft
+run-name: Release ${{ github.ref_name }} at ${{ github.sha }}
 on:
   push:
     tags: ['v*']
@@ -27,7 +28,9 @@ jobs:
           java-version: '25'
       - uses: android-actions/setup-android@v4
         with:
-          packages: 'platform-tools platforms;android-37.0 build-tools;36.0.0'
+          packages: 'platform-tools build-tools;36.0.0'
+      - name: Install Android SDK Platform 37.0
+        run: sdkmanager --install "platforms;android-37.0"
       - uses: gradle/actions/setup-gradle@v5
       - name: Validate release version
         env:
