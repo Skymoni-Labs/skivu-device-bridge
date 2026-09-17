@@ -107,4 +107,4 @@ Each current guide has an English / 简体中文 switch at the top.
 
 ## License
 
-The public repository does not yet include a license file, and the package is marked `UNLICENSED`. An open-source license must be confirmed before release.
+Licensed under the [MIT License](LICENSE).

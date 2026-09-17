@@ -1,8 +1,8 @@
 {
   "name": "@nidhoggfgg/phone-use",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Phone Use Android MCP stdio bridge",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/nidhoggfgg/PhoneUse.git"
@@ -29,7 +29,8 @@
     "CONTRIBUTING.md",
     "CONTRIBUTING.zh-CN.md",
     "fixture/README.md",
-    "fixture/README.zh-CN.md"
+    "fixture/README.zh-CN.md",
+    "LICENSE"
   ],
   "scripts": {
     "test": "node --test tests/launcher.test.mjs"

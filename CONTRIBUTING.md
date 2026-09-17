@@ -6,7 +6,7 @@
 
 Include the app revision, device model and Android version, client/host version, steps to reproduce, expected and actual behavior, and relevant error codes. Distinguish emulator results from physical-device results. For uncertain input, report the original request state without replaying it just to reproduce the issue.
 
-Remove credentials, pairing secrets, personal screen contents, and machine-specific paths from reports. Do not attach `~/.phoneuse.json` or real account data. A public license has not yet been confirmed; review that status before contributing code intended for redistribution.
+Remove credentials, pairing secrets, personal screen contents, and machine-specific paths from reports. Do not attach `~/.phoneuse.json` or real account data. This project uses the [MIT License](LICENSE).
 
 ## Make a change
 

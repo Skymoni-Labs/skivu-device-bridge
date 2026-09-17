@@ -1,6 +1,7 @@
 package ai.nidhoggfgg.phoneuse.server
 
 import ai.nidhoggfgg.phoneuse.core.*
+import ai.nidhoggfgg.phoneuse.BuildConfig
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedInputStream
@@ -224,7 +225,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         val result = when (method) {
             "initialize" -> json("protocolVersion" to params.optString("protocolVersion").takeIf { it in versions }.orEmpty().ifEmpty { "2025-11-25" },
                 "capabilities" to json("tools" to json("listChanged" to false)),
-                "serverInfo" to json("name" to "phone-use", "version" to "0.1.0"),
+                "serverInfo" to json("name" to "phone-use", "version" to BuildConfig.VERSION_NAME),
                 "instructions" to "Paired clients can call actions directly. Always supply a unique request_id. Read tool results; Android acceptance is not business success.")
             "ping" -> JSONObject()
             "tools/list" -> json("tools" to ToolCatalog.all())

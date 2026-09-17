@@ -107,4 +107,4 @@ python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-
 
 ## 许可证
 
-公开仓库尚未包含许可证文件，包目前标记为 `UNLICENSED`。正式发布前需确认开源许可证。
+本项目采用 [MIT 许可证](LICENSE)。

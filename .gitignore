@@ -17,3 +17,8 @@ local.properties
 __pycache__/
 .phoneuse.json
 /dist/
+*.jks
+*.keystore
+*.p12
+keystore.properties
+*.keystore.base64

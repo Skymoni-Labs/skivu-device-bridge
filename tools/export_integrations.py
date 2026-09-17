@@ -9,12 +9,14 @@ from zipfile import ZipFile, ZIP_DEFLATED
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = {
     "phoneuse-mcp": {
+        "LICENSE": "LICENSE",
         "phoneuse_client.py": "tools/phoneuse_client.py",
         "configure.py": "integrations/mcp/configure.py",
         "README.md": "integrations/mcp/README.md",
         "README.zh-CN.md": "integrations/mcp/README.zh-CN.md",
     },
     "phone-use": {
+        "LICENSE": "LICENSE",
         "SKILL.md": "skills/phone-use/SKILL.md",
         "README.zh-CN.md": "skills/phone-use/README.zh-CN.md",
         "agents/openai.yaml": "skills/phone-use/agents/openai.yaml",
