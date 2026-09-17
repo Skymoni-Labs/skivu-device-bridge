@@ -1,4 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Phone Use</string>
-    <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可通过通知栏随时暂停或停止服务。</string>
+    <string name="app_name" translatable="false">Phone Use</string>
+    <string name="accessibility_description">Allow paired external clients to read the screen and UI elements, and perform taps, text input, and navigation. Keep the phone awake and unlocked. Pause or stop the service from the notification at any time.</string>
+    <string name="dashboard_description">Let external agents observe and control this Android phone.</string>
+    <string name="device_identity">Device identity</string>
+    <string name="device_name">Device name</string>
+    <string name="save_name">Save name</string>
+    <string name="device_emulator">Emulator</string>
+    <string name="device_physical">Physical device</string>
+    <string name="device_details">%1$s · Android %2$s · %3$s</string>
+    <string name="device_id">Device ID: %1$s</string>
+    <string name="device_identity_help">The device ID stays with this installation. IP address changes do not affect pairing.</string>
+    <string name="service_stopped">Service not started</string>
+    <string name="accessibility_enabled">Accessibility access granted</string>
+    <string name="accessibility_disabled">Accessibility is off. Pairing and API debugging are available; device actions require accessibility access.</string>
+    <string name="keep_unlocked">Keep the phone awake and unlocked during use. Pause or stop from the notification at any time.</string>
+    <string name="accessibility_settings">Accessibility settings</string>
+    <string name="start_http_service">Start HTTP service</string>
+    <string name="resume_control">Resume control</string>
+    <string name="pause_control">Pause control</string>
+    <string name="stop_service">Stop service</string>
+    <string name="connection_pairing">Connection and pairing</string>
+    <string name="connection_help">Open an address above in a computer browser to use the web console. Request pairing from the web page or a client, then approve it here.</string>
+    <string name="pairing_persistence_help">Pair each client once. An enabled service restarts when the app opens; pause state and paired clients are preserved.</string>
+    <string name="open_web_console">Open web console</string>
+    <string name="pairing_requests">Pairing requests</string>
+    <string name="waiting_for_pairing">Waiting for a client to request pairing…</string>
+    <string name="pairing_source">Source: %1$s · Name provided by client</string>
+    <string name="verification_code">Verification code: %1$s</string>
+    <string name="pairing_approval_help">Compare this code with the client. Approval remembers the client across restarts. You can revoke access at any time.</string>
+    <string name="approve">Approve</string>
+    <string name="deny">Deny</string>
+    <string name="paired_clients">Paired clients</string>
+    <string name="no_clients">No paired clients</string>
+    <string name="unpair">Unpair</string>
+    <string name="dashboard_footer">No ADB, root, or computer connection required. Protected windows may block screenshots. This app does not call models or decide whether a task is complete.</string>
+    <string name="notification_channel">Phone Use control</string>
+    <string name="service_starting">Service starting</string>
+    <string name="http_start_failed">Could not start HTTP service: %1$s</string>
+    <string name="client_storage_failed">Could not initialize client storage: %1$s</string>
+    <string name="service_pairing_pending">Pairing request received · Open app to approve</string>
+    <string name="service_paused">Control paused</string>
+    <string name="service_recent_request">Recent client activity · Service available</string>
+    <string name="service_available">Service available, waiting for connections</string>
+    <string name="notification_resume">Phone Use: Resume</string>
+    <string name="notification_pause">Phone Use: Pause</string>
+    <string name="notification_stop">Phone Use: Stop service</string>
+    <string name="device_name_invalid">Device name must contain 1–80 printable characters.</string>
+    <string name="device_name_save_failed">Could not save the device name. Please try again.</string>
+    <string name="pairing_approval_failed">Could not save client approval. Please try again.</string>
+    <plurals name="pairing_seconds_remaining">
+        <item quantity="one">%1$d second remaining</item>
+        <item quantity="other">%1$d seconds remaining</item>
+    </plurals>
 </resources>

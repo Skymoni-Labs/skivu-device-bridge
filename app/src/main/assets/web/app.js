@@ -1,4 +1,5 @@
 'use strict';
+const { t } = PhoneUseI18n;
 const $ = id => document.getElementById(id);
 // randomUUID requires a secure context; LAN HTTP still supports getRandomValues.
 function newRequestId() {
@@ -13,16 +14,16 @@ let credential = null, pending = null, tools = [], busy = false, generation = 0,
 try {
   pending = JSON.parse(sessionStorage.getItem('phoneuse.pairing') || 'null');
 } catch { sessionStorage.removeItem('phoneuse.pairing'); }
-$('endpoints').textContent = `API: ${location.origin}/api\n工具: ${location.origin}/api/tools\nMCP: python tools/phoneuse_client.py mcp-stdio --url ${location.origin}`;
+$('endpoints').textContent = t('endpoints', { origin: location.origin });
 const messages = {
-  PAUSED: '手机已暂停控制，请在手机上恢复后重试。',
-  CANCELLED: '本次操作已取消，请检查手机上的控制状态。',
-  UNAUTHORIZED: '授权已撤销，请重新连接手机。',
-  STALE_OBSERVATION: '界面已变化，请重新调用 observe 后再试。'
+  PAUSED: t('error_paused'),
+  CANCELLED: t('error_cancelled'),
+  UNAUTHORIZED: t('error_unauthorized'),
+  STALE_OBSERVATION: t('error_stale_observation')
 };
 function notice(error) { $('notice').textContent = error ? messages[error.code] || error.message : ''; }
 function controls() {
-  $('connection').textContent = credential ? '已配对' : pending ? '等待手机授权' : '尚未配对';
+  $('connection').textContent = credential ? t('paired') : pending ? t('awaiting_approval') : t('unpaired');
   $('pair').disabled = !!credential || !!pending || busy;
   $('pair-form').hidden = !!credential;
   $('forget').disabled = !credential || busy;
@@ -40,16 +41,16 @@ async function request(path, payload, legacyToken) {
   const value = await response.json();
   if (response.status === 401) {
     credential = null; clearResult(); sessionStorage.removeItem('phoneuse.credential'); controls();
-    $('pair-status').textContent = '授权已撤销或浏览器配对数据已清除，请重新配对。';
+    $('pair-status').textContent = t('pairing_revoked');
   }
-  if (!response.ok) throw new Error(response.status === 401 ? '授权已失效，请重新连接手机。' : value.error?.message || value.error || `HTTP ${response.status}`);
+  if (!response.ok) throw new Error(response.status === 401 ? t('authorization_expired') : value.error?.message || value.error || `HTTP ${response.status}`);
   return value;
 }
 const labels = {
-  get_capabilities: '设备能力', get_status: '状态 / 请求结果',
-  cancel: '取消请求', observe: '观察界面', list_apps: '应用列表', wait_for_change: '等待界面变化',
-  tap: '点击', long_press: '长按', swipe: '滑动', scroll: '滚动', input_text: '输入文字',
-  back: '返回', home: '主屏幕', recents: '最近任务', launch_app: '启动应用'
+  get_capabilities: t('tool_get_capabilities'), get_status: t('tool_get_status'),
+  cancel: t('tool_cancel'), observe: t('tool_observe'), list_apps: t('tool_list_apps'), wait_for_change: t('tool_wait_for_change'),
+  tap: t('tool_tap'), long_press: t('tool_long_press'), swipe: t('tool_swipe'), scroll: t('tool_scroll'), input_text: t('tool_input_text'),
+  back: t('tool_back'), home: t('tool_home'), recents: t('tool_recents'), launch_app: t('tool_launch_app')
 };
 function renderList() {
   const query = $('search').value.trim().toLowerCase();
@@ -61,12 +62,12 @@ function renderList() {
     const label = document.createElement('small'); label.textContent = labels[tool.name] || tool.description;
     button.append(name, label); button.onclick = () => selectTool(tool.name); return button;
   }));
-  if (!matches.length) $('tool-list').textContent = tools.length ? '没有匹配的 API。' : '配对后加载 API 列表。';
+  if (!matches.length) $('tool-list').textContent = tools.length ? t('no_matches') : t('load_after_pairing');
   controls();
 }
 function readArguments() {
   const args = JSON.parse($('arguments').value);
-  if (!args || Array.isArray(args) || typeof args !== 'object') throw new Error('参数必须是 JSON 对象。');
+  if (!args || Array.isArray(args) || typeof args !== 'object') throw new Error(t('arguments_object'));
   return args;
 }
 function renderFields() {
@@ -79,24 +80,24 @@ function renderFields() {
     const label = document.createElement('label'); label.htmlFor = 'param-' + key; label.textContent = key + (required.includes(key) ? ' *' : '');
     let input;
     if (schema.type === 'boolean') {
-      input = document.createElement('select'); input.append(new Option('不传入', ''), new Option('true', 'true'), new Option('false', 'false'));
+      input = document.createElement('select'); input.append(new Option(t('omit_value'), ''), new Option('true', 'true'), new Option('false', 'false'));
     } else {
       input = document.createElement(['object', 'array'].includes(schema.type) ? 'textarea' : 'input');
       if (schema.type === 'number' || schema.type === 'integer') { input.type = 'number'; input.step = schema.type === 'integer' ? '1' : 'any'; }
     }
     input.id = 'param-' + key;
     input.value = args[key] === undefined ? '' : typeof args[key] === 'object' ? JSON.stringify(args[key]) : String(args[key]);
-    input.placeholder = required.includes(key) ? '必填 · ' + schema.type : '可选 · ' + schema.type;
+    input.placeholder = t(required.includes(key) ? 'required_type' : 'optional_type', { type: schema.type });
     input.oninput = () => {
       try {
         const value = readArguments();
         if (input.value === '' && !required.includes(key)) delete value[key];
         else value[key] = schema.type === 'string' ? input.value : JSON.parse(input.value);
         $('arguments').value = JSON.stringify(value, null, 2); input.setCustomValidity(''); notice(null);
-      } catch { input.setCustomValidity('请输入有效的 ' + schema.type + ' 值，并检查 JSON 参数。'); }
+      } catch { input.setCustomValidity(t('invalid_type', { type: schema.type })); }
     };
     const help = document.createElement('small'); help.textContent = (schema.description || schema.type) +
-      (schema.default === undefined ? '' : `（默认：${schema.default}）`);
+      (schema.default === undefined ? '' : t('default_value', { value: schema.default }));
     wrapper.append(label, input, help); return wrapper;
   }));
   $('no-fields').hidden = fields.length !== 0;
@@ -127,18 +128,18 @@ async function loadTools() {
 async function pollPairing() {
   const current = ++generation;
   $('verification').textContent = pending.verification_code;
-  $('pair-status').textContent = '请打开手机 App，核对两端显示的核对码并授权。请求两分钟有效。';
+  $('pair-status').textContent = t('pairing_instructions');
   controls();
   try {
     while (pending && current === generation) {
-      if (Date.now() >= pending.deadline) throw new Error('配对请求已过期，请重新发起。');
+      if (Date.now() >= pending.deadline) throw new Error(t('pairing_expired'));
       await new Promise(resolve => setTimeout(resolve, 2000));
       if (current !== generation) return;
       const value = await request('/browser/pair/status', { pairing_id: pending.pairing_id, pairing_secret: pending.pairing_secret });
-      if (value.status === 'denied') throw new Error('手机已拒绝或撤销此次授权。');
+      if (value.status === 'denied') throw new Error(t('pairing_denied'));
       if (value.status === 'approved') {
         credential = { client_id: value.client_id };
-        $('pair-status').textContent = '已记住此浏览器，下次打开会自动连接。';
+        $('pair-status').textContent = t('browser_remembered');
         break;
       }
     }
@@ -174,29 +175,29 @@ function observationIncomplete(value) {
     item.tree?.available === false || item.screenshot?.available === false);
 }
 const recoveryLabels = {
-  refresh_observation: '重新观察并重新选择目标。',
-  wait_original_request: '使用原 request_id 查询 get_status，等待原请求完成。',
-  reconcile_result: '核对原请求结果和当前界面。',
-  choose_explicit_target: '根据新观察选择唯一、明确的目标。'
+  refresh_observation: t('recovery_refresh_observation'),
+  wait_original_request: t('recovery_wait_original_request'),
+  reconcile_result: t('recovery_reconcile_result'),
+  choose_explicit_target: t('recovery_choose_explicit_target')
 };
 function resultStatus(value) {
   const result = !value.error && value.request && typeof value.request === 'object' ? value.request : value;
-  if (result.state === 'accepted') return '动作仍在排队；使用原 request_id 查询 get_status，请勿重新发起动作。';
+  if (result.state === 'accepted') return t('result_accepted');
   if (result.state === 'executing') {
-    const progress = result.observation_purpose === 'after_rejection' && result.action_executed === false ? '动作未执行，正在读取恢复观察' : result.action_executed === true ? '动作已执行，正在等待观察' : '动作正在执行';
-    return progress + '；使用原 request_id 查询 get_status，请勿重新发起动作。';
+    const progress = result.observation_purpose === 'after_rejection' && result.action_executed === false ? t('progress_recovery') : result.action_executed === true ? t('progress_observing') : t('progress_executing');
+    return t('result_executing', { progress });
   }
-  if (result.state === 'unknown') return '动作结果未知；查询原 request_id 并观察现场，请勿重放动作。';
+  if (result.state === 'unknown') return t('result_unknown');
   const recovery = recoveryLabels[result.recovery?.category];
-  const hint = recovery ? ` 恢复建议：${recovery}建议不保证下一次操作成功。` : '';
-  if (result.error) return `操作失败：${messages[result.error.code] || result.error.message}` +
-    (result.recovery_observation ? (observationIncomplete(result.recovery_observation) ? ' 恢复观察未完成。' : ' 已附带恢复观察，请检查其采集时间。') : '') + hint;
+  const hint = recovery ? t('recovery_hint', { recovery }) : '';
+  if (result.error) return t('operation_failed', { message: messages[result.error.code] || result.error.message }) +
+    (result.recovery_observation ? (observationIncomplete(result.recovery_observation) ? t('recovery_incomplete') : t('recovery_attached')) : '') + hint;
   if (observationIncomplete(result)) {
     const conditions = activeObservations(result).map(item => item.condition).filter(Boolean);
-    const detail = conditions.some(item => item.status === 'unknown') ? '当前条件未知' : conditions.some(item => item.status === 'ambiguous') ? '目标匹配有歧义' : conditions.some(item => item.status !== 'satisfied') ? '条件未满足' : activeObservations(result).some(item => item.error) ? '观察采集失败' : '请求的树或截图不可用';
-    return `${result.action_executed === true || result.state === 'executed' ? '动作已执行；' : ''}观察未完成（${detail}）。请独立调用 observe；请勿重放动作。` + hint;
+    const detail = conditions.some(item => item.status === 'unknown') ? t('condition_unknown') : conditions.some(item => item.status === 'ambiguous') ? t('condition_ambiguous') : conditions.some(item => item.status !== 'satisfied') ? t('condition_unsatisfied') : activeObservations(result).some(item => item.error) ? t('observation_failed') : t('observation_unavailable');
+    return t('observation_incomplete', { prefix: result.action_executed === true || result.state === 'executed' ? t('action_executed_prefix') : '', detail }) + hint;
   }
-  return '已返回 · ' + (result.state || '完成') + hint;
+  return t('result_returned', { state: result.state || t('completed') }) + hint;
 }
 function showResult(value) {
   const copy = JSON.parse(JSON.stringify(value));
@@ -211,7 +212,7 @@ function showResult(value) {
     $('image-result').hidden = false;
     copy.screenshot_display_source = [...selected.path, 'screenshot'].join('.');
   }
-  for (const item of observations) if (item.value.screenshot?.data_base64) item.value.screenshot.data_base64 = item.value.screenshot === shot ? '(见下方截图附件)' : '(已省略其他截图数据)';
+  for (const item of observations) if (item.value.screenshot?.data_base64) item.value.screenshot.data_base64 = item.value.screenshot === shot ? t('screenshot_attached') : t('screenshot_omitted');
   $('result').textContent = JSON.stringify(copy, null, 2);
   $('result-status').textContent = resultStatus(value);
 }
@@ -225,17 +226,17 @@ async function call(tool, args) {
 }
 async function execute(work) {
   if (busy) return;
-  busy = true; notice(null); controls(); $('result-status').textContent = '正在处理…';
+  busy = true; notice(null); controls(); $('result-status').textContent = t('processing');
   try { await work(); } catch (error) {
     notice(error);
-    if (!error.resultShown) $('result-status').textContent = '调用未成功。网络异常时请用原 request_id 调用 get_status 查询结果，请勿重放动作。';
+    if (!error.resultShown) $('result-status').textContent = t('call_failed');
   } finally { busy = false; controls(); }
 }
 $('search').oninput = renderList;
 $('arguments').onchange = () => { try { renderFields(); notice(null); } catch (error) { notice(error); } };
 
 $('run').onclick = () => execute(async () => {
-  for (const input of $('fields').querySelectorAll('input, textarea, select')) if (!input.validity.valid) throw new Error(input.id + '：参数格式无效');
+  for (const input of $('fields').querySelectorAll('input, textarea, select')) if (!input.validity.valid) throw new Error(t('invalid_parameter', { field: input.id }));
   const args = readArguments();
   const schema = tools.find(t => t.name === selectedTool).inputSchema;
   if (schema.required?.includes('request_id') && !args.request_id) args.request_id = newRequestId();
@@ -245,7 +246,7 @@ $('run').onclick = () => execute(async () => {
 $('new-id').onclick = () => {
   try {
     const args = readArguments();
-    if (!tools.find(t => t.name === selectedTool)?.inputSchema.required?.includes('request_id')) throw new Error('当前工具不需要动作 ID。');
+    if (!tools.find(t => t.name === selectedTool)?.inputSchema.required?.includes('request_id')) throw new Error(t('no_action_id'));
     args.request_id = newRequestId();
     $('arguments').value = JSON.stringify(args, null, 2); notice(null);
   } catch (error) { notice(error); }
@@ -253,7 +254,7 @@ $('new-id').onclick = () => {
 $('forget').onclick = () => execute(async () => {
   await request('/browser/forget', {});
   credential = null; sessionStorage.removeItem('phoneuse.credential');
-  $('pair-status').textContent = '已解除此浏览器的配对，再次使用需在手机授权。';
+  $('pair-status').textContent = t('browser_unpaired');
   $('result').textContent = '{}'; clearResult(); controls();
 });
 controls();
@@ -264,11 +265,11 @@ window.addEventListener('focus', () => void restoreConnection());
 function clearResult() {
   $('image-result').hidden = true; $('screenshot').removeAttribute('src'); $('result').textContent = '{}';
   selectedTool = ''; tools = []; $('arguments').value = '{}'; $('fields').replaceChildren();
-  $('schema').textContent = '尚未加载'; $('tool-title').textContent = '选择 API';
-  $('description').textContent = '从左侧选择接口，填写参数并调用。'; $('no-fields').hidden = true; renderList();
+  $('schema').textContent = t('not_loaded'); $('tool-title').textContent = t('select_api');
+  $('description').textContent = t('select_api_help'); $('no-fields').hidden = true; renderList();
 }
 async function connect() {
-  $('pair-status').textContent = '已记住此浏览器，关闭页面或重启 App 后仍可连接。';
+  $('pair-status').textContent = t('browser_persistent');
   await execute(loadTools);
 }
 async function restoreConnection() {
@@ -293,15 +294,15 @@ async function restoreConnection() {
         generation++; pending = null; sessionStorage.removeItem('phoneuse.pairing'); $('verification').textContent = '';
       }
       await loadTools();
-      $('pair-status').textContent = '已自动连接。此浏览器已配对，无需再次授权。';
+      $('pair-status').textContent = t('auto_connected');
     } else if (!pending) {
       clearResult();
-      $('pair-status').textContent = wasPaired ? '授权已失效，请重新配对。' : '首次配对在手机上批准，之后自动连接。';
+      $('pair-status').textContent = wasPaired ? t('pair_again') : t('pairing_first_time');
     }
     restored = true;
   } catch (error) {
     notice(error);
-    $('pair-status').textContent = '暂时无法连接手机，正在等待服务恢复；已有配对会保留。';
+    $('pair-status').textContent = t('reconnecting');
     reconnectTimer = setTimeout(() => void restoreConnection(), 5000);
   } finally { busy = false; controls(); }
   if (restored && pending && !credential && !$('verification').textContent) void pollPairing();

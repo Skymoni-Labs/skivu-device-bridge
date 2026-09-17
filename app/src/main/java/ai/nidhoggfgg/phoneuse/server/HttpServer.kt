@@ -94,8 +94,8 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     publicPage = request[0] == "GET" && path == "/")) {
                 throw HttpError(403, "Use the phone's IPv4 address and port; cross-origin access is not allowed")
             }
-            if (request[0] == "GET" && path in setOf("/", "/app.js")) {
-                val file = if (path == "/") "index.html" else "app.js"
+            if (request[0] == "GET" && path in setOf("/", "/app.js", "/i18n.js")) {
+                val file = if (path == "/") "index.html" else path.removePrefix("/")
                 val type = if (path == "/") "text/html; charset=utf-8" else "text/javascript; charset=utf-8"
                 write(socket, Response(200, text = assets.open("web/$file").bufferedReader().use { it.readText() }, contentType = type))
                 return

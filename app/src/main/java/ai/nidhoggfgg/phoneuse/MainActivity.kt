@@ -17,6 +17,9 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.pluralStringResource
+import ai.nidhoggfgg.phoneuse.core.DeviceError
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
@@ -50,10 +53,10 @@ class MainActivity : ComponentActivity() {
     }
     @Composable private fun Dashboard() {
         var tick by remember { mutableIntStateOf(0) }
-        var pairingError by remember { mutableStateOf<String?>(null) }
+        var pairingError by remember { mutableStateOf<Int?>(null) }
         val deviceIdentity = remember { DeviceIdentity(this@MainActivity) }
         var deviceName by remember { mutableStateOf(deviceIdentity.name) }
-        var nameError by remember { mutableStateOf<String?>(null) }
+        var nameError by remember { mutableStateOf<Int?>(null) }
         LaunchedEffect(Unit) { while (true) { delay(1000); tick++ } }
         @Suppress("UNUSED_VARIABLE") val refresh = tick
         val service = PhoneUseService.current
@@ -64,82 +67,86 @@ class MainActivity : ComponentActivity() {
         }.getOrDefault(emptyList()) }
         Scaffold { padding ->
             Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                Text("Phone Use", style = MaterialTheme.typography.headlineLarge)
-                Text("让外部 Agent 观察和操作这台 Android 手机。", style = MaterialTheme.typography.bodyLarge)
+                Text(stringResource(R.string.app_name), style = MaterialTheme.typography.headlineLarge)
+                Text(stringResource(R.string.dashboard_description), style = MaterialTheme.typography.bodyLarge)
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("本机身份", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.device_identity), style = MaterialTheme.typography.titleMedium)
                         OutlinedTextField(value = deviceName, onValueChange = { deviceName = it; nameError = null },
-                            label = { Text("设备名称") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            label = { Text(stringResource(R.string.device_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                             isError = nameError != null)
                         OutlinedButton(onClick = {
-                            nameError = runCatching { deviceIdentity.rename(deviceName); deviceName = deviceIdentity.name }.exceptionOrNull()?.message
+                            nameError = runCatching { deviceIdentity.rename(deviceName); deviceName = deviceIdentity.name }.exceptionOrNull()?.let {
+                                if ((it as? DeviceError)?.code == "INVALID_ARGUMENT") R.string.device_name_invalid else R.string.device_name_save_failed
+                            }
                             tick++
-                        }, enabled = deviceName != deviceIdentity.name) { Text("保存名称") }
-                        nameError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        }, enabled = deviceName != deviceIdentity.name) { Text(stringResource(R.string.save_name)) }
+                        nameError?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
                         val descriptor = deviceIdentity.describe("")
-                        Text("${Build.MODEL} · Android ${Build.VERSION.RELEASE}" + if (descriptor.getBoolean("is_emulator")) " · 模拟器" else " · 实体设备")
-                        SelectionContainer { Text("设备 ID：${deviceIdentity.id}", style = MaterialTheme.typography.bodySmall) }
-                        Text("设备 ID 随安装保留，IP 地址变化不影响配对身份。", style = MaterialTheme.typography.bodySmall)
+                        Text(stringResource(R.string.device_details, Build.MODEL, Build.VERSION.RELEASE,
+                            stringResource(if (descriptor.getBoolean("is_emulator")) R.string.device_emulator else R.string.device_physical)))
+                        SelectionContainer { Text(stringResource(R.string.device_id, deviceIdentity.id), style = MaterialTheme.typography.bodySmall) }
+                        Text(stringResource(R.string.device_identity_help), style = MaterialTheme.typography.bodySmall)
                     }
                 }
                 Card(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(service?.stateText() ?: "服务未启动", style = MaterialTheme.typography.titleMedium)
-                        Text(if (accessibility) "无障碍服务已授权" else "无障碍未开启；可先配对和调试 API，设备操作需授权无障碍。")
-                        Text("操作时请保持亮屏并解锁。可随时通过通知栏暂停或停止。")
+                        Text(stringResource(service?.stateMessage() ?: R.string.service_stopped), style = MaterialTheme.typography.titleMedium)
+                        Text(if (accessibility) stringResource(R.string.accessibility_enabled) else stringResource(R.string.accessibility_disabled))
+                        Text(stringResource(R.string.keep_unlocked))
                     }
                 }
-                Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text("无障碍设置") }
+                Button(onClick = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }) { Text(stringResource(R.string.accessibility_settings)) }
                 if (service == null) {
-                    Button(onClick = { startEndpoint() }) { Text("启动 HTTP 服务") }
-                    PhoneUseService.lastError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    Button(onClick = { startEndpoint() }) { Text(stringResource(R.string.start_http_service)) }
+                    PhoneUseService.lastError?.let { Text(stringResource(it.messageRes, it.detail), color = MaterialTheme.colorScheme.error) }
                 } else {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(onClick = { service.setPaused(!service.controller.gate.paused); tick++ }) {
-                            Text(if (service.controller.gate.paused) "恢复控制" else "暂停控制")
+                            Text(if (service.controller.gate.paused) stringResource(R.string.resume_control) else stringResource(R.string.pause_control))
                         }
-                        OutlinedButton(onClick = { service.stopEndpoint(); tick++ }) { Text("停止服务") }
+                        OutlinedButton(onClick = { service.stopEndpoint(); tick++ }) { Text(stringResource(R.string.stop_service)) }
                     }
                     HorizontalDivider()
-                    Text("连接与配对", style = MaterialTheme.typography.titleLarge)
+                    Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleLarge)
                     SelectionContainer { Text((addresses + "127.0.0.1").joinToString("\n") { "http://$it:8443" } + "\nAPI: /api · MCP: /mcp") }
-                    Text("在电脑浏览器打开上方地址即可使用 Web 控制台。从网页或客户端发起配对请求，然后在这里授权。")
-                    Text("每个客户端只需配对一次。重启 App 后自动恢复已启用的服务；暂停状态和配对记录都会保留。")
-                    OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("http://127.0.0.1:8443/"))) }) { Text("打开 Web 控制台") }
-                    Text("配对请求", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.connection_help))
+                    Text(stringResource(R.string.pairing_persistence_help))
+                    OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("http://127.0.0.1:8443/"))) }) { Text(stringResource(R.string.open_web_console)) }
+                    Text(stringResource(R.string.pairing_requests), style = MaterialTheme.typography.titleMedium)
                     val pending = service.identities.pairing.pending()
-                    if (pending.isEmpty()) Text("等待客户端发起配对…")
-                    pairingError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    if (pending.isEmpty()) Text(stringResource(R.string.waiting_for_pairing))
+                    pairingError?.let { Text(stringResource(it), color = MaterialTheme.colorScheme.error) }
                     pending.forEach { request ->
                         Card(Modifier.fillMaxWidth()) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(request.name, style = MaterialTheme.typography.titleMedium)
-                                Text("来源：${request.source} · 名称由客户端提供")
-                                Text("核对码：${request.verificationCode}", style = MaterialTheme.typography.headlineSmall)
-                                Text("请与客户端核对。授权后长期记住此客户端，重启无需重新配对，可随时撤销。")
-                                Text("剩余 ${((request.deadline - android.os.SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0)} 秒")
+                                Text(stringResource(R.string.pairing_source, request.source))
+                                Text(stringResource(R.string.verification_code, request.verificationCode), style = MaterialTheme.typography.headlineSmall)
+                                Text(stringResource(R.string.pairing_approval_help))
+                                val secondsRemaining = ((request.deadline - android.os.SystemClock.elapsedRealtime()) / 1000).coerceAtLeast(0).toInt()
+                                Text(pluralStringResource(R.plurals.pairing_seconds_remaining, secondsRemaining, secondsRemaining))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Button(onClick = {
-                                        pairingError = runCatching { service.identities.pairing.decide(request.id, true) }.exceptionOrNull()?.message
+                                        pairingError = runCatching { service.identities.pairing.decide(request.id, true) }.exceptionOrNull()?.let { R.string.pairing_approval_failed }
                                         tick++
-                                    }) { Text("授权") }
-                                    OutlinedButton(onClick = { service.identities.pairing.decide(request.id, false); tick++ }) { Text("拒绝") }
+                                    }) { Text(stringResource(R.string.approve)) }
+                                    OutlinedButton(onClick = { service.identities.pairing.decide(request.id, false); tick++ }) { Text(stringResource(R.string.deny)) }
                                 }
                             }
                         }
                     }
-                    Text("已配对客户端", style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.paired_clients), style = MaterialTheme.typography.titleMedium)
                     val clients = service.identities.clients()
-                    if (clients.isEmpty()) Text("暂无客户端")
+                    if (clients.isEmpty()) Text(stringResource(R.string.no_clients))
                     clients.forEach { (id, name) ->
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Text(name, Modifier.weight(1f).padding(top = 12.dp))
-                            TextButton(onClick = { service.revokeClient(id); tick++ }) { Text("解除配对") }
+                            TextButton(onClick = { service.revokeClient(id); tick++ }) { Text(stringResource(R.string.unpair)) }
                         }
                     }
                 }
-                Text("无需 ADB、root 或电脑连接。受保护窗口可能无法截图；本应用不调用模型，也不判断任务是否完成。", style = MaterialTheme.typography.bodySmall)
+                Text(stringResource(R.string.dashboard_footer), style = MaterialTheme.typography.bodySmall)
             }
         }
     }

@@ -3,6 +3,7 @@ package ai.nidhoggfgg.phoneuse
 import android.app.*
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -33,10 +34,18 @@ class PhoneUseService : Service() {
     }
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannel()
+        if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification(getString(R.string.service_starting)), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        else startForeground(1, notification(getString(R.string.service_starting)))
+    }
+    private fun createNotificationChannel() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel(CHANNEL, "Phone Use 控制", NotificationManager.IMPORTANCE_LOW))
-        if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification("服务正在启动"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        else startForeground(1, notification("服务正在启动"))
+            NotificationChannel(CHANNEL, getString(R.string.notification_channel), NotificationManager.IMPORTANCE_LOW))
+    }
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        createNotificationChannel()
+        updateNotification(force = true)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -81,11 +90,11 @@ class PhoneUseService : Service() {
                         current = this
                         lastError = null
                         handler.post(refresh)
-                    } catch (e: Exception) { lastError = "HTTP 启动失败：${e.javaClass.simpleName} ${e.message.orEmpty()}"; stopSelf() }
+                    } catch (e: Exception) { lastError = ServiceError(R.string.http_start_failed, "${e.javaClass.simpleName} ${e.message.orEmpty()}"); stopSelf() }
                     starting = false
                 }
             } catch (e: Exception) {
-                lastError = "客户端存储初始化失败：${e.javaClass.simpleName}"
+                lastError = ServiceError(R.string.client_storage_failed, e.javaClass.simpleName)
                 handler.post { stopSelf() }
             }
         }, "phone-use-start").start()
@@ -97,19 +106,20 @@ class PhoneUseService : Service() {
         if (lastClient == id) lastClient = null
         updateNotification()
     }
-    fun stateText(): String {
-        if (!::controller.isInitialized) return "服务正在启动"
+    fun stateMessage(): Int {
+        if (!::controller.isInitialized) return R.string.service_starting
         return when {
-            identities.pairing.pending().isNotEmpty() -> "收到配对请求 · 点击打开 App 授权"
-            controller.gate.paused -> "控制已暂停"
-            lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> "客户端最近有请求 · 服务可用"
-            else -> "服务可用，等待连接"
+            identities.pairing.pending().isNotEmpty() -> R.string.service_pairing_pending
+            controller.gate.paused -> R.string.service_paused
+            lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> R.string.service_recent_request
+            else -> R.string.service_available
         }
     }
-    private fun updateNotification() {
-        val text = stateText()
-        if (notificationText == text) return
-        notificationText = text
+    private fun updateNotification(force: Boolean = false) {
+        val text = getString(stateMessage())
+        val key = "$text:${::controller.isInitialized && controller.gate.paused}"
+        if (!force && notificationText == key) return
+        notificationText = key
         getSystemService(NotificationManager::class.java).notify(1, notification(text))
     }
     private fun notification(text: String): Notification {
@@ -117,10 +127,10 @@ class PhoneUseService : Service() {
         fun action(action: String, code: Int) = PendingIntent.getService(this, code, Intent(this, PhoneUseService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val paused = ::controller.isInitialized && controller.gate.paused
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_control)
-            .setContentTitle("Phone Use").setContentText(text).setContentIntent(open).setOngoing(true)
+            .setContentTitle(getString(R.string.app_name)).setContentText(text).setContentIntent(open).setOngoing(true)
             .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .addAction(0, if (paused) "Phone Use：恢复" else "Phone Use：暂停", action(if (paused) RESUME else PAUSE, 1))
-            .addAction(0, "Phone Use：停止服务", action(STOP, 3)).build()
+            .addAction(0, getString(if (paused) R.string.notification_resume else R.string.notification_pause), action(if (paused) RESUME else PAUSE, 1))
+            .addAction(0, getString(R.string.notification_stop), action(STOP, 3)).build()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
@@ -133,6 +143,7 @@ class PhoneUseService : Service() {
         stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
+    data class ServiceError(val messageRes: Int, val detail: String)
     companion object {
         const val CHANNEL = "phone_use_control"
         const val PAUSE = "phoneuse.PAUSE"
@@ -140,7 +151,7 @@ class PhoneUseService : Service() {
         const val STOP = "phoneuse.STOP"
         @Volatile var current: PhoneUseService? = null
             private set
-        @Volatile var lastError: String? = null
+        @Volatile var lastError: ServiceError? = null
             private set
     }
 }

@@ -33,6 +33,10 @@ android {
     buildFeatures {
         compose = true
     }
+    bundle {
+        // Local notification protection needs every translated action label, even after a locale change.
+        language { enableSplit = false }
+    }
 }
 
 dependencies {

@@ -33,6 +33,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         val width: Int, val height: Int, val rotation: Int, val created: Long,
         val nodes: Map<String, ElementReference>, val exported: Set<String>)
     private val snapshots = SnapshotStore<Snapshot>({ SystemClock.elapsedRealtime() })
+    private val localControlLabels by lazy { localControlLabels(context) }
     private fun service() = PhoneAccessibilityService.current ?: fail("ACCESSIBILITY_UNAVAILABLE", "Enable Phone Use accessibility service")
     private fun ready(): PhoneAccessibilityService {
         val service = service()
@@ -252,7 +253,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             val own = node.packageName?.toString() == context.packageName
             val label = node.text?.toString().orEmpty()
             val description = node.contentDescription?.toString().orEmpty()
-            val local = own || LOCAL_CONTROL_LABELS.any { it.equals(label, ignoreCase = true) || it.equals(description, ignoreCase = true) }
+            val local = own || localControlLabels.any { it.equals(label, ignoreCase = true) || it.equals(description, ignoreCase = true) }
             if (local && (own || node.isVisibleToUser)) {
                 val bounds = Rect(); node.getBoundsInScreen(bounds)
                 if (points == null || pathIntersectsRegion(points, listOf(ScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom))))

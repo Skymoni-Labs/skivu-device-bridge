@@ -94,9 +94,6 @@ internal data class NodeReference(val content: String, val selectionStart: Int, 
 
 internal data class ElementReference(val reference: NodeReference, val identity: String, val complete: Boolean = true)
 
-/** Unique labels on our notification actions keep those local even when System UI hosts them. */
-internal val LOCAL_CONTROL_LABELS = setOf("Phone Use：暂停", "Phone Use：恢复", "Phone Use：停止服务")
-
 internal data class ScreenRect(val left: Int, val top: Int, val right: Int, val bottom: Int) {
     fun intersects(other: ScreenRect): Boolean = left < other.right && right > other.left && top < other.bottom && bottom > other.top
     fun contains(x: Double, y: Double): Boolean = x >= left && x < right && y >= top && y < bottom

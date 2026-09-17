@@ -15,9 +15,9 @@ const catalog = [tool('get_capabilities'), tool('get_status', [], { request_id: 
 })];
 const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
-  if (req.url === '/' || req.url === '/app.js') {
+  if (['/', '/app.js', '/i18n.js'].includes(req.url)) {
     res.setHeader('Content-Type', req.url === '/' ? 'text/html; charset=utf-8' : 'text/javascript');
-    res.end(fs.readFileSync(path.join(root, req.url === '/' ? 'index.html' : 'app.js'))); return;
+    res.end(fs.readFileSync(path.join(root, req.url === '/' ? 'index.html' : req.url.slice(1)))); return;
   }
   res.setHeader('Content-Type', 'application/json');
   let body = ''; for await (const chunk of req) body += chunk;
@@ -64,7 +64,7 @@ const server = http.createServer(async (req, res) => {
   let browser;
   try {
     browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP phoneuse.test 127.0.0.1', '--no-proxy-server'], ...(process.env.PHONEUSE_BROWSER_CHANNEL ? { channel: process.env.PHONEUSE_BROWSER_CHANNEL } : {}) });
-    let context = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
+    let context = await browser.newContext({ locale: 'zh-CN', viewport: { width: 1280, height: 1000 } });
     let page = await context.newPage();
     const errors = []; page.on('pageerror', e => errors.push(e.message));
     // A non-loopback HTTP origin exposes the same secure-context limitations as LAN IP access.
@@ -89,7 +89,7 @@ const server = http.createServer(async (req, res) => {
     const savedState = await context.storageState();
     await browser.close();
     browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP phoneuse.test 127.0.0.1', '--no-proxy-server'], ...(process.env.PHONEUSE_BROWSER_CHANNEL ? { channel: process.env.PHONEUSE_BROWSER_CHANNEL } : {}) });
-    context = await browser.newContext({ storageState: savedState, viewport: { width: 1280, height: 1000 } });
+    context = await browser.newContext({ locale: 'zh-CN', storageState: savedState, viewport: { width: 1280, height: 1000 } });
     page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
     await page.goto(`http://phoneuse.test:${server.address().port}/`);
     await page.waitForFunction(() => !document.getElementById('run').disabled);
@@ -215,6 +215,43 @@ const server = http.createServer(async (req, res) => {
     await page.waitForFunction(() => document.getElementById('notice').textContent.includes('过期'));
     assert.equal(await page.locator('#pair').isEnabled(), true);
     assert.deepEqual(errors, []);
-    console.log(`PASS: HttpOnly pairing, browser restart, reconnect, forms, action IDs, conditional progress, nested recovery images, no replay, unpair/revocation/expiry, responsive layout and CSP; ${polls} polls; no page errors.`);
+    await context.close();
+    // Browser locale selects UI resources without changing API names, payloads or pairing.
+    for (const locale of ['en-US', 'de-DE']) {
+      context = await browser.newContext({ locale, viewport: { width: 1280, height: 1000 } });
+      page = await context.newPage(); page.on('pageerror', e => errors.push(e.message));
+      await page.goto(`http://phoneuse.test:${server.address().port}/`);
+      await page.waitForFunction(() => !document.getElementById('pair').disabled);
+      assert.equal(await page.locator('html').getAttribute('lang'), 'en');
+      assert.equal(await page.locator('#pair').textContent(), 'Request pairing');
+      assert.equal(await page.locator('#search').getAttribute('placeholder'), 'Search names or descriptions');
+      assert.equal(await page.locator('#client-name').getAttribute('aria-label'), 'Client name');
+      if (locale === 'en-US') {
+        pairingState = 'approved';
+        await page.locator('#pair').click();
+        await page.waitForFunction(() => !document.getElementById('run').disabled);
+        assert.equal(await page.locator('#connection').textContent(), 'Paired');
+        await page.locator('[data-tool="launch_app"]').click();
+        await page.locator('#param-package_name').fill('ai.example.app');
+        assert.equal(await page.locator('#param-package_name').getAttribute('placeholder'), 'Required · string');
+        nextResult = { state: 'failed', error: { code: 'PAUSED', message: 'Paused' } };
+        await page.locator('#run').click();
+        await page.waitForFunction(() => !document.getElementById('run').disabled);
+        assert.match(await page.locator('#result-status').textContent(), /Operation failed: Control is paused/);
+        assert.equal(calls.at(-1).tool, 'launch_app');
+        assert.equal(calls.at(-1).arguments.package_name, 'ai.example.app');
+        assert.ok(calls.at(-1).arguments.request_id);
+        assert.doesNotMatch(await page.locator('body').innerText(), /[\p{Script=Han}]/u);
+        await page.screenshot({ path: path.join(reportDir, 'web-console-english-desktop.png'), fullPage: true });
+        await page.setViewportSize({ width: 390, height: 844 });
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await page.screenshot({ path: path.join(reportDir, 'web-console-english-mobile.png'), fullPage: true });
+        await page.locator('#forget').click();
+        await page.waitForFunction(() => document.getElementById('connection').textContent === 'Not paired');
+      }
+      await context.close();
+    }
+    assert.deepEqual(errors, []);
+    console.log(`PASS: Chinese/English UI and language fallback, HttpOnly pairing, browser restart, reconnect, forms, action IDs, conditional progress, nested recovery images, no replay, unpair/revocation/expiry, responsive layout and CSP; ${polls} polls; no page errors.`);
   } finally { if (browser) await browser.close(); server.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });
