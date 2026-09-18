@@ -171,6 +171,8 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 `output` 默认 `decision`；需要旧格式时显式传 `output:"legacy"`。`output:"decision"` 只改变对外树投影，保留节点路径 element_id、必要的 parent_id、内容、边界、真实支持的动作及影响操作的状态。仅有 hint、error、state_description 的节点也可保留。默认省略 class、view_id 和未命名动作；`include_details:true` 展开 class、view_id、raw_actions。未知 Android 动作不会被当作可执行动作。
 
+决策输出会将可明确归属的静态叶子文字合并到最近的真实点击/长按目标，生成 `label` 和 `label_sources`。`label` 是显示摘要，不替代原始 `text/description`，也不用于 `wait_until` 精确匹配；`label_sources` 只是文字来源路径，不能直接用作动作引用。动作仍使用 `elements` 中目标的原始 `element_id`、边界和真实动作。独立按钮、编辑框、状态节点以及带 collection/collection_item 的列表分组会保留；合并不会跨越有语义的分组、滚动区域或范围外目标，也不会合并边界不被目标包含的文字。标签按原树顺序、description 在 text 前精确去重，最多合并 8 个来源节点且摘要不超过 1024 字符，超出预算的节点保留。`tree.merged_nodes` 表示合并掉的节点数。`include_details:true` 展开被合并的文字节点并保留摘要；legacy 输出不执行语义合并。需要引用文字来源节点时，请先获取展开后的新观察。没有无障碍分组证据的视觉卡片不会凭空推断分组。
+
 精简布尔状态按 `tree.state_defaults` 解读：enabled、visible 默认为 true；editable、password、focused、checkable、checked、selected、content_invalid 默认为 false。节点输出其偏离默认值的状态。省略字段不能被误读为缺少编辑能力或与默认值相反的状态。
 
 `region:{left,top,right,bottom}` 使用显示器物理像素，保留与区域相交的节点；`subtree:{observation_id,element_id}` 使用同客户端的原快照定位子树，读取前必须重新验证目标，不能直接套用旧路径。两者可共同限制输出，不缩小内部采集范围，也不裁剪截图。导出的节点仍受原观察、设备/显示和目标校验约束。

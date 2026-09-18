@@ -144,9 +144,10 @@ internal fun projectTree(elements: JSONArray, decision: Boolean, compact: Boolea
     } ?: emptyList()
     fun useful(node: JSONObject): Boolean = listOf("text", "description", "hint", "error", "state_description").any {
         !node.isNull(it) && node.optString(it).isNotEmpty()
-    } || actions(node).isNotEmpty() || (details && (node.optJSONArray("actions")?.length() ?: 0) > 0) || !node.isNull("range") ||
-        listOf("editable", "password", "checkable", "checked", "selected", "content_invalid").any { node.optBoolean(it) } || !node.optBoolean("enabled", true)
-    val kept = nodes.filter { node ->
+    } || actions(node).isNotEmpty() || (details && (node.optJSONArray("actions")?.length() ?: 0) > 0) ||
+        listOf("range", "collection", "collection_item").any { !node.isNull(it) } ||
+        listOf("editable", "password", "focused", "checkable", "checked", "selected", "content_invalid").any { node.optBoolean(it) } || !node.optBoolean("enabled", true)
+    val eligible = nodes.filter { node ->
         val path = node.getString("element_id")
         val b = node.getJSONArray("bounds")
         val inScope = (subtree == null || path == subtree || path.startsWith("$subtree.")) &&
@@ -155,6 +156,7 @@ internal fun projectTree(elements: JSONArray, decision: Boolean, compact: Boolea
         inScope && if (decision) node.optBoolean("visible", true) && node.optBoolean("_on_screen", true) && b.getInt(2) > b.getInt(0) && b.getInt(3) > b.getInt(1) && useful(node)
         else !compact || node.optBoolean("_compact_keep")
     }
+    val kept = if (decision) semanticObjects(nodes, eligible, details) else eligible
     val ids = kept.map { it.getString("element_id") }.toSet()
     val projected = JSONArray()
     kept.forEach { node ->
@@ -182,6 +184,7 @@ internal fun projectTree(elements: JSONArray, decision: Boolean, compact: Boolea
     }
     return json("elements" to projected, "output" to if (decision) "decision" else "legacy",
         "scope_clipped" to (region != null || subtree != null), "collected_nodes" to nodes.size,
+        "merged_nodes" to (eligible.size - kept.size),
         "output_nodes" to projected.length(), "output_bytes" to projected.toString().toByteArray(Charsets.UTF_8).size,
         "state_defaults" to json("enabled" to true, "visible" to true, "editable" to false, "password" to false,
             "focused" to false, "checkable" to false, "checked" to false, "selected" to false, "content_invalid" to false))
