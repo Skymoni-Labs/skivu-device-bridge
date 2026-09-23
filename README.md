@@ -42,11 +42,11 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See 
 
 ### 3. Pair a client
 
-Open `http://PHONE_IPV4:8443/` in your browser, request pairing, compare the verification codes, and approve the request **on the phone**. The console then lets you browse tools, edit parameters, and inspect responses.
+Connect with the Python client or MCP bridge using `https://PHONE_IPV4:8443`. Compare all eight digits with the phone, approve there, and confirm the match in the client. No certificate installation or long fingerprint copy is needed. Direct browser access requires separate certificate trust.
 
 Pairing persists across client and app restarts until revoked or its stored credentials are removed. The browser and MCP bridge pair separately by default. Accessibility is required for device interaction; pairing and status queries can work without it.
 
-**Transport:** port 8443 uses plain HTTP, not HTTPS. Credentials, screenshots, and actions are not encrypted in transit. Use a trusted network; there is no internet relay. See [connection details](docs/usage.md).
+**Transport:** port 8443 uses HTTPS with per-device public-key binding. First pairing requires an eight-digit comparison and confirmation on both sides; subsequent connections verify the saved key automatically. Old HTTP credentials require new pairing. See [connection details](docs/usage.md).
 
 ## Connect an AI agent
 
@@ -60,7 +60,7 @@ npx skills add nidhoggfgg/PhoneUse --skill phone-use
 
 Select your AI client and installation scope. Then ask it:
 
-> Use $phone-use to connect to http://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
+> Use $phone-use to connect to https://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
 
 ### MCP
 
@@ -79,7 +79,7 @@ The [AI integration guide](docs/integrations.md) includes full commands, Windows
 The CLI uses Python 3.10+ and the standard library only. From a repository checkout:
 
 ```sh
-python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
+python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
 python tools/phoneuse_client.py list-devices
 python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg

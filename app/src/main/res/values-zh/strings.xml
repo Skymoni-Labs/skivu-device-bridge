@@ -14,13 +14,13 @@
     <string name="pause_control">暂停控制</string>
     <string name="stop_service">停止服务</string>
     <string name="connection_pairing">连接与配对</string>
-    <string name="connection_help">在同一网络的电脑上打开此地址，发起配对后在这里授权。</string>
+    <string name="connection_help">在同一网络通过 MCP 或 Python 客户端连接，逐位核对八位码后在此批准。浏览器直连需要单独信任证书。</string>
     <string name="pairing_persistence_help">每个客户端只需配对一次。重启 App 后自动恢复已启用的服务；暂停状态和配对记录都会保留。</string>
     <string name="open_web_console">打开 Web 控制台</string>
     <string name="pairing_requests">配对请求</string>
     <string name="pairing_source">来源：%1$s · 名称由客户端提供</string>
     <string name="verification_code">核对码：%1$s</string>
-    <string name="pairing_approval_help">请与客户端核对。授权后长期记住此客户端，重启无需重新配对，可随时撤销。</string>
+    <string name="pairing_approval_help">请逐位核对客户端显示的核对码，仅在完全一致时批准。不要让远程工具代为批准。授权后重启无需重新配对，可随时撤销。</string>
     <string name="approve">授权</string>
     <string name="deny">拒绝</string>
     <string name="paired_clients">已配对客户端</string>
@@ -28,7 +28,7 @@
     <string name="unpair">解除配对</string>
     <string name="notification_channel">Phone Use 控制</string>
     <string name="service_starting">服务正在启动</string>
-    <string name="http_start_failed">HTTP 启动失败：%1$s</string>
+    <string name="http_start_failed">HTTPS 启动失败：%1$s</string>
     <string name="client_storage_failed">客户端存储初始化失败：%1$s</string>
     <string name="service_pairing_pending">收到配对请求 · 点击打开 App 授权</string>
     <string name="service_paused">控制已暂停</string>

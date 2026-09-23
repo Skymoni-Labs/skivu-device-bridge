@@ -4,7 +4,7 @@
 
 用户无需手动下载、解压 ZIP。Skill 使用 `skills add`，MCP 使用 `npx` 自动获取并启动桥接。
 
-两者都需要本机 Python 3.10+，在线安装请使用 Node.js 22.20+（含 npm/npx，满足当前 Skills CLI 要求；MCP 启动器本身支持 Node.js 18+）；从 GitHub 获取包还需要 Git。手机启动 Phone Use 并开启无障碍，电脑能访问手机 IPv4，首次连接由用户在手机批准。截图和控制使用局域网明文 HTTP，不提供云端中继。
+两者都需要本机 Python 3.10+，在线安装请使用 Node.js 22.20+（含 npm/npx，满足当前 Skills CLI 要求；MCP 启动器本身支持 Node.js 18+）；从 GitHub 获取包还需要 Git。手机启动 Phone Use 并开启无障碍，电脑能访问手机 IPv4，首次连接由用户在手机批准。截图和控制使用绑定公钥的 HTTPS。首次逐位核对八位码，在手机批准，并明确告诉 AI 核对一致后，它才能携带 `confirm_pairing:true` 继续。不提供云端中继。
 
 下列 GitHub 命令读取 `nidhoggfgg/PhoneUse` 的默认分支，仓库必须对使用者可访问。当前方案无需注册 npm 包；`@nidhoggfgg/phone-use` 是包内名称，不代表已发布到 npm registry。
 
@@ -24,11 +24,11 @@ npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --globa
 
 第一个 `--yes` 允许 npx 获取安装器，第二个跳过安装器的交互选择。仅当前项目使用时去掉 `--global`；其他宿主可在交互流程选择。重新加载 Skill 后说：
 
-> 使用 $phone-use 连接 http://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
+> 使用 $phone-use 连接 https://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
 
 可直接交给 AI 的安装指令：
 
-> 请将 https://github.com/nidhoggfgg/PhoneUse 的 phone-use Skill 安装到当前 AI 客户端，使用 npx skills add，安装范围为当前项目。检查 Python 3.10+ 是否可用，保留其他已安装的 Skill。安装后连接我的手机 http://手机IPv4:8443，首次配对由我在手机批准。
+> 请将 https://github.com/nidhoggfgg/PhoneUse 的 phone-use Skill 安装到当前 AI 客户端，使用 npx skills add，安装范围为当前项目。检查 Python 3.10+ 是否可用，保留其他已安装的 Skill。安装后连接我的手机 https://手机IPv4:8443，首次配对由我在手机批准。
 
 手机地址必须换成真实值；未提供时由 AI 询问。Skill 安装并不自动授权手机。
 
@@ -74,13 +74,13 @@ npx -y --package=github:nidhoggfgg/PhoneUse phone-use print-config
 
 可直接交给 AI 的安装指令：
 
-> 请为当前 AI 客户端安装 Phone Use MCP，服务名 phone-use，启动命令为 npx -y --package=github:nidhoggfgg/PhoneUse phone-use。先检查 Node.js、Git 和 Python 3.10+；优先使用宿主的 MCP 添加命令，否则用该包的 print-config 生成片段并合并配置，保留其他服务。Windows 使用 cmd /d /c 启动 npx。完成后连接我的手机 http://手机IPv4:8443，配对由我在手机批准。
+> 请为当前 AI 客户端安装 Phone Use MCP，服务名 phone-use，启动命令为 npx -y --package=github:nidhoggfgg/PhoneUse phone-use。先检查 Node.js、Git 和 Python 3.10+；优先使用宿主的 MCP 添加命令，否则用该包的 print-config 生成片段并合并配置，保留其他服务。Windows 使用 cmd /d /c 启动 npx。完成后连接我的手机 https://手机IPv4:8443，配对由我在手机批准。
 
 ### 首次连接
 
-重新加载宿主 MCP，让 AI 调用 `phoneuse_connect({"address":"http://手机IPv4:8443"})`。工具显示核对码，手机批准后再次调用 `phoneuse_connect({"device_id":"返回的ID"})` 完成领取。每次设备操作显式指定 device_id，之后自动沿用授权。
+重新加载宿主 MCP，让 AI 调用 `phoneuse_connect({"address":"https://手机IPv4:8443"})`。工具显示八位核对码，用户逐位核对并在手机批准，再明确告诉 AI 核对一致后，才能调用 `phoneuse_connect({"device_id":"返回的ID","confirm_pairing":true})` 完成领取。每次设备操作显式指定 device_id，之后自动沿用授权。
 
-可选启动参数：`--url http://手机IPv4:8443`、`--name "My AI"`、`--config /absolute/path/registry.json`。自定义参数应由宿主按独立参数传递；Windows 使用 cmd 时需按该 shell 的规则正确引用，普通安装无需添加这些参数，地址通过 phoneuse_connect 提供。
+可选启动参数：`--url https://手机IPv4:8443`、`--name "My AI"`、`--config /absolute/path/registry.json`。自定义参数应由宿主按独立参数传递；Windows 使用 cmd 时需按该 shell 的规则正确引用，普通安装无需添加这些参数，地址通过 phoneuse_connect 提供。
 
 MCP 支持 `2025-03-26`、`2025-06-18`、`2025-11-25`；未实现 2026 协议。Python 桥接返回原生截图图片块。手机离线时仍能初始化；长批量任务可拆分或提高宿主超时。
 
@@ -88,9 +88,9 @@ MCP 支持 `2025-03-26`、`2025-06-18`、`2025-11-25`；未实现 2026 协议。
 
 ### 本地源码或直连 HTTP
 
-已有源码时，可将 `python /absolute/path/tools/phoneuse_client.py mcp-stdio --url http://PHONE_IPV4:8443 --name "My AI"` 配置为宿主的 stdio 命令。
+已有源码时，可将 `python /absolute/path/tools/phoneuse_client.py mcp-stdio --url https://PHONE_IPV4:8443 --name "My AI"` 配置为宿主的 stdio 命令。
 
-自行管理 Bearer 凭证的程序也可连接 `http://PHONE_IPV4:8443/mcp`，使用不含 SSE 的 Streamable HTTP POST/JSON。原生配对及传输细节见仓库 API 参考。
+自行管理 Bearer 凭证的程序也可连接 `https://PHONE_IPV4:8443/mcp`，使用不含 SSE 的 Streamable HTTP POST/JSON。原生配对及传输细节见仓库 API 参考。
 
 ## 更新与凭证
 

@@ -33,7 +33,7 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         if (addresses.isEmpty()) {
             Text(stringResource(R.string.no_network_address), style = MaterialTheme.typography.bodyMedium)
         } else SelectionContainer {
-            Text(addresses.joinToString("\n") { "http://$it:8443" }, style = MaterialTheme.typography.bodyLarge)
+            Text(addresses.joinToString("\n") { "https://$it:8443" }, style = MaterialTheme.typography.bodyLarge)
         }
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onOpenWebConsole) { Text(stringResource(R.string.open_web_console)) }
@@ -43,7 +43,7 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         }
         if (detailsOpen) {
             HorizontalDivider()
-            SelectionContainer { Text("http://127.0.0.1:8443\nAPI: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
+            SelectionContainer { Text("https://127.0.0.1:8443\nAPI: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.pairing_persistence_help), style = MaterialTheme.typography.bodySmall)
         }
     }

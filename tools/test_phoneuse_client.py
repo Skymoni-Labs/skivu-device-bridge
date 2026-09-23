@@ -15,16 +15,17 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import phoneuse_client as client
+from tls_test_support import CERT_DER, PIN, wrap_server
 
 
 def identity(device_id="phone-a", instance="run-a"):
     return {"device_id": device_id, "service_instance_id": instance, "name": "测试手机 " + device_id,
-            "model": "Pixel", "android_version": "16", "is_emulator": False}
+            "model": "Pixel", "android_version": "16", "is_emulator": False, "tls_pin": PIN}
 
 
 def pending():
     return {"pairing_id": "pair-id", "pairing_secret": "pair-secret", "verification_code": "123456",
-            "status": "pending", "expires_in": 120, "poll_interval": 2, **identity()}
+            "status": "committed", "protocol": client.PAIRING_PROTOCOL, "server_nonce": "22" * 32, "expires_in": 120, "poll_interval": 2, **identity()}
 
 
 class ClientTest(unittest.TestCase):
@@ -38,13 +39,13 @@ class ClientTest(unittest.TestCase):
         saved = {}
         for name in devices or ("phone-a",):
             suffix = name.rsplit("-", 1)[-1]
-            saved[name] = {**identity(name, "run-" + suffix), "url": f"http://phone-{suffix}:8443",
+            saved[name] = {**identity(name, "run-" + suffix), "url": f"https://phone-{suffix}:8443",
                            "token": "secret-" + suffix, "client_id": "client-" + suffix}
         self.path.write_text(json.dumps({"version": 2, "devices": saved}), encoding="utf-8")
 
     @staticmethod
-    def identify_address(address):
-        name = address.removeprefix("http://").split(":")[0]
+    def identify_address(address, tls_pin=None):
+        name = address.removeprefix("https://").split(":")[0]
         return identity(name, "run-" + name.rsplit("-", 1)[-1])
 
     def read(self):
@@ -59,13 +60,14 @@ class ClientTest(unittest.TestCase):
 
     def test_http_202_body_and_empty_notification(self):
         connection = MagicMock()
+        connection.sock.getpeercert.return_value = CERT_DER
         response = connection.getresponse.return_value
         response.status = 202
         response.read.return_value = b'{"status":"pending"}'
-        with patch.object(client.http.client, "HTTPConnection", return_value=connection):
-            self.assertEqual({"status": "pending"}, client.post({"url": "http://phone-a:8443"}, "/pair/request", {}, False))
+        with patch.object(client.http.client, "HTTPSConnection", return_value=connection):
+            self.assertEqual({"status": "pending"}, client.post({"url": "https://phone-a:8443", "tls_pin": PIN}, "/pair/request", {}, False))
             response.read.return_value = b""
-            self.assertIsNone(client.post({"url": "http://phone-a:8443"}, "/mcp", {}, False))
+            self.assertIsNone(client.post({"url": "https://phone-a:8443", "tls_pin": PIN}, "/mcp", {}, False))
 
     def test_real_http_checks_identity_and_routes_unicode_without_sending_token_to_reassigned_address(self):
         self.save_devices()
@@ -91,11 +93,11 @@ class ClientTest(unittest.TestCase):
                 seen.append(("POST", self.path, self.headers.get("Authorization"), payload))
                 self.reply({"state": "executed", **served[0]})
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = wrap_server(ThreadingHTTPServer(("127.0.0.1", 0), Handler))
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         thread.start()
         try:
-            self.connection._update("phone-a", url=f"http://127.0.0.1:{server.server_port}")
+            self.connection._update("phone-a", url=f"https://127.0.0.1:{server.server_port}")
             result = self.connection.send("phone-a", "/api", {"tool": "input_text", "arguments": {"text": "中文", "request_id": "one"}})
             self.assertEqual("phone-a", result["device_id"])
             self.assertEqual(("GET", "/identity", None), seen[0][:3])
@@ -114,30 +116,31 @@ class ClientTest(unittest.TestCase):
 
     def test_identity_is_get_without_credentials_and_post_is_utf8(self):
         connection = MagicMock()
+        connection.sock.getpeercert.return_value = CERT_DER
         response = connection.getresponse.return_value
         response.status = 200
         response.read.return_value = json.dumps(identity()).encode()
-        with patch.object(client.http.client, "HTTPConnection", return_value=connection):
+        with patch.object(client.http.client, "HTTPSConnection", return_value=connection):
             client.identify("phone-a")
             args = connection.request.call_args.args
             self.assertEqual(("GET", "/identity", None), args[:3])
             self.assertNotIn("Authorization", args[3])
-            client.post({"url": "phone-a", "token": "secret"}, "/api", {"text": "中文"})
+            client.post({"url": "phone-a", "token": "secret", "tls_pin": PIN}, "/api", {"text": "中文"})
             self.assertIn("中文".encode("utf-8"), connection.request.call_args.args[2])
             self.assertEqual("Bearer secret", connection.request.call_args.args[3]["Authorization"])
 
     def test_origins_accept_address_hints_but_reject_path_or_credentials(self):
-        self.assertEqual("http://192.168.1.2:8443", client.origin("192.168.1.2"))
-        self.assertEqual("http://[::1]:8443", client.origin("http://[::1]"))
-        for value in ("https://phone", "http://u:p@phone", "http://phone/api", "http://phone?token=x"):
+        self.assertEqual("https://192.168.1.2:8443", client.origin("192.168.1.2"))
+        self.assertEqual("https://[::1]:8443", client.origin("https://[::1]"))
+        for value in ("http://phone", "https://u:p@phone", "https://phone/api", "https://phone?token=x"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 client.origin(value)
 
     def test_pairing_survives_restart_and_never_exposes_secrets(self):
         with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=[
-                pending(), {"status": "approved", "token": "new-secret", "client_id": "client", **identity()}]) as post:
+                pending(), {"status": "pending", **identity()}, {"status": "approved", "token": "new-secret", "client_id": "client", **identity()}]) as post:
             first = self.connection.connect("phone-a")
-            second = client.Connection(self.path).connect(device_id="phone-a")
+            second = client.Connection(self.path).connect(device_id="phone-a", confirm_pairing=True)
         self.assertEqual("pending", first["status"])
         self.assertEqual("paired", second["status"])
         self.assertEqual("phone-a", second["device_id"])
@@ -145,13 +148,13 @@ class ClientTest(unittest.TestCase):
         self.assertNotIn("new-secret", json.dumps(second))
         self.assertNotIn("pending", self.read()["devices"]["phone-a"])
         self.assertEqual("new-secret", self.read()["devices"]["phone-a"]["token"])
-        self.assertEqual(["/pair/request", "/pair/status"], [call.args[1] for call in post.call_args_list])
+        self.assertEqual(["/pair/request", "/pair/reveal", "/pair/status"], [call.args[1] for call in post.call_args_list])
 
     def test_pairing_denial_clears_pending_without_credential(self):
-        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=[pending(), {"status": "denied", **identity()}]):
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=[pending(), {"status": "pending", **identity()}, {"status": "denied", **identity()}]):
             self.connection.connect("phone-a")
             with self.assertRaisesRegex(client.BridgeError, "denied"):
-                self.connection.connect(device_id="phone-a")
+                self.connection.connect(device_id="phone-a", confirm_pairing=True)
         self.assertNotIn("pending", self.read()["devices"]["phone-a"])
         self.assertNotIn("token", self.read()["devices"]["phone-a"])
 
@@ -159,7 +162,7 @@ class ClientTest(unittest.TestCase):
         for expire_by_time in (True, False):
             with self.subTest(expire_by_time=expire_by_time):
                 self.path.unlink(missing_ok=True)
-                with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=pending()):
+                with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=lambda config, endpoint, *a, **kw: pending() if endpoint == "/pair/request" else {"status": "pending", **identity()}):
                     self.connection.connect("phone-a")
                 if expire_by_time:
                     with self.connection.store.transaction(write=True) as config:
@@ -167,7 +170,7 @@ class ClientTest(unittest.TestCase):
                 new_identity = identity(instance="run-a" if expire_by_time else "restarted")
                 with patch.object(client, "identify", return_value=new_identity), patch.object(client, "post") as post:
                     with self.assertRaisesRegex(client.BridgeError, "expired|restarted"):
-                        self.connection.connect(device_id="phone-a")
+                        self.connection.connect(device_id="phone-a", confirm_pairing=True)
                     post.assert_not_called()
                 self.assertNotIn("pending", self.read()["devices"]["phone-a"])
 
@@ -176,7 +179,7 @@ class ClientTest(unittest.TestCase):
         with patch.object(client, "identify", return_value=identity()) as identify_mock, patch.object(client, "post", return_value=identity()) as post:
             result = self.connection.connect("192.168.1.25", "phone-a")
         self.assertEqual("paired", result["status"])
-        self.assertEqual("http://192.168.1.25:8443", self.read()["devices"]["phone-a"]["url"])
+        self.assertEqual("https://192.168.1.25:8443", self.read()["devices"]["phone-a"]["url"])
         self.assertEqual("secret-a", post.call_args.args[0]["token"])
         self.assertGreaterEqual(identify_mock.call_count, 1)
 
@@ -188,37 +191,35 @@ class ClientTest(unittest.TestCase):
             self.assertEqual("DEVICE_IDENTITY_MISMATCH", raised.exception.value["error"]["code"])
             self.assertFalse(raised.exception.value["action_executed"])
             with self.assertRaises(client.BridgeError):
-                self.connection.connect(device_id="phone-a")
+                self.connection.connect(device_id="phone-a", confirm_pairing=True)
             post.assert_not_called()
         self.assertEqual("secret-a", self.read()["devices"]["phone-a"]["token"])
 
     def test_connecting_reassigned_address_registers_new_identity_without_old_token(self):
         self.save_devices()
         new_identity = identity("new-install", "run-new")
-        with patch.object(client, "identify", return_value=new_identity), patch.object(client, "post", return_value={**pending(), **new_identity}) as post:
+        with patch.object(client, "identify", return_value=new_identity), patch.object(client, "post", side_effect=lambda config, endpoint, *a, **kw: {**pending(), **new_identity} if endpoint == "/pair/request" else {"status": "pending", **new_identity}) as post:
             result = self.connection.connect("phone-a")
         self.assertEqual("new-install", result["device_id"])
         self.assertNotIn("token", post.call_args.args[0])
         self.assertEqual({"phone-a", "new-install"}, set(self.read()["devices"]))
 
     def test_unbound_legacy_credentials_require_new_phone_approval(self):
-        self.path.write_text(json.dumps({"url": "http://phone-a:8443", "token": "legacy-secret"}))
+        self.path.write_text(json.dumps({"url": "https://phone-a:8443", "token": "legacy-secret"}))
         self.assertIn("Legacy", self.connection.list_devices(False)["message"])
-        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=[pending(),
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=[pending(), {"status": "pending", **identity()},
                 {"status": "approved", "token": "fresh-secret", "client_id": "fresh", **identity()}]) as post:
             self.connection.connect()
-            self.connection.connect(device_id="phone-a")
+            self.connection.connect(device_id="phone-a", confirm_pairing=True)
         for call in post.call_args_list:
             self.assertNotIn("legacy-secret", str(call))
         self.assertNotIn("legacy_pairing_requires_approval", self.read())
         self.assertEqual("fresh-secret", self.read()["devices"]["phone-a"]["token"])
 
-    def test_bound_single_device_config_migrates_after_identity_verification(self):
+    def test_bound_single_device_http_config_requires_fresh_approval(self):
         self.path.write_text(json.dumps({"url": "http://phone-a:8443", "token": "bound-secret", "device_id": "phone-a"}))
-        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=identity()) as post:
-            self.connection.connect(device_id="phone-a")
-        self.assertEqual("bound-secret", post.call_args.args[0]["token"])
-        self.assertEqual(2, self.read()["version"])
+        self.assertNotIn("token", self.connection.config["devices"]["phone-a"])
+        self.assertEqual("https://phone-a:8443", self.connection.config["devices"]["phone-a"]["url"])
 
     def test_revocation_is_isolated_and_does_not_implicitly_pair(self):
         self.save_devices("phone-a", "phone-b")
@@ -274,7 +275,7 @@ class ClientTest(unittest.TestCase):
 
     def test_list_devices_reports_metadata_offline_status_without_secrets(self):
         self.save_devices("phone-a", "phone-b")
-        def identify_some(address):
+        def identify_some(address, tls_pin=None):
             if "phone-b" in address:
                 raise ConnectionRefusedError("offline")
             return identity()
@@ -570,13 +571,14 @@ class ClientTest(unittest.TestCase):
 
     def test_standalone_conditional_read_has_longer_http_timeout_but_actions_do_not(self):
         connection = MagicMock()
+        connection.sock.getpeercert.return_value = CERT_DER
         connection.getresponse.return_value.status = 200
         connection.getresponse.return_value.read.return_value = b'{}'
         for endpoint, payload, timeout in (("/api", {"tool": "observe"}, 90),
                                            ("/mcp", {"params": {"name": "observe"}}, 90),
                                            ("/api", {"tool": "home", "arguments": {"observe_after": True}}, 25)):
-            with self.subTest(endpoint=endpoint, payload=payload), patch.object(client.http.client, "HTTPConnection", return_value=connection) as factory:
-                client.post({"url": "phone-a", "token": "secret"}, endpoint, payload)
+            with self.subTest(endpoint=endpoint, payload=payload), patch.object(client.http.client, "HTTPSConnection", return_value=connection) as factory:
+                client.post({"url": "phone-a", "token": "secret", "tls_pin": PIN}, endpoint, payload)
             self.assertEqual(timeout, factory.call_args.kwargs["timeout"])
 
     def test_screenshot_save_failure_preserves_executed_action(self):
@@ -587,14 +589,14 @@ class ClientTest(unittest.TestCase):
         self.assertEqual("OBSERVATION_INCONSISTENT", value["observation"]["error"]["code"])
 
     def test_missing_identity_in_pairing_response_is_not_saved(self):
-        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=pending()):
+        with patch.object(client, "identify", return_value=identity()), patch.object(client, "post", side_effect=lambda config, endpoint, *a, **kw: pending() if endpoint == "/pair/request" else {"status": "pending", **identity()}):
             self.connection.connect("phone-a")
         for missing in ("device_id", "service_instance_id"):
             approved = {"status": "approved", "token": "unbound-secret", "client_id": "client", **identity()}
             approved.pop(missing)
             with self.subTest(missing=missing), patch.object(client, "identify", return_value=identity()), patch.object(client, "post", return_value=approved):
                 with self.assertRaises(client.BridgeError) as raised:
-                    self.connection.connect(device_id="phone-a")
+                    self.connection.connect(device_id="phone-a", confirm_pairing=True)
                 self.assertEqual("IDENTITY_UNAVAILABLE", raised.exception.value["error"]["code"])
                 self.assertNotIn("token", self.read()["devices"]["phone-a"])
 

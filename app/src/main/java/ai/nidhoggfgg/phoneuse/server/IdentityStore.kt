@@ -13,7 +13,9 @@ import java.util.UUID
 @android.annotation.SuppressLint("ApplySharedPref", "UseKtx") // Synchronous persistence is part of credential issuance/revocation.
 class IdentityStore(context: Context) {
     val deviceIdentity = DeviceIdentity(context)
-    private val preferences = context.getSharedPreferences("clients", Context.MODE_PRIVATE)
+    val tls = TlsIdentity()
+    // HTTP-era bearer credentials may have been exposed; they cannot authorize TLS control.
+    private val preferences = context.getSharedPreferences("clients_tls_v1", Context.MODE_PRIVATE)
     private val random = SecureRandom()
     val pairing = PairingRequests(SystemClock::elapsedRealtime, ::issue)
     @Synchronized private fun issue(name: String): JSONObject {

@@ -12,6 +12,7 @@ from zipfile import ZipFile
 
 import export_integrations
 import sync_skill
+from tls_test_support import PIN, wrap_server
 
 class IntegrationPackageTest(unittest.TestCase):
     def test_installable_skill_is_synchronized(self):
@@ -72,7 +73,7 @@ class IntegrationPackageTest(unittest.TestCase):
         server = tomllib.loads(result.stdout)["mcp_servers"]["phone-use"]
         self.assertEqual(sys.executable, server["command"])
         self.assertEqual('中文 "AI"', server["args"][server["args"].index("--name") + 1])
-        self.assertEqual("http://127.0.0.1:8443", server["args"][-1])
+        self.assertEqual("https://127.0.0.1:8443", server["args"][-1])
         self.assertTrue(Path(server["args"][0]).is_file())
 
     def test_output_does_not_overwrite_existing_settings(self):
@@ -83,8 +84,8 @@ class IntegrationPackageTest(unittest.TestCase):
         self.assertEqual("keep this", output.read_text(encoding="utf-8"))
 
     def test_address_rejects_credentials_paths_domains_and_bad_ports(self):
-        for address in ("http://user:secret@127.0.0.1", "https://127.0.0.1", "http://127.0.0.1/mcp",
-                        "http://127.0.0.1:0", "http://127.0.0.1:65536", "http://example.org"):
+        for address in ("https://user:secret@127.0.0.1", "http://127.0.0.1", "https://127.0.0.1/mcp",
+                        "https://127.0.0.1:0", "https://127.0.0.1:65536", "https://example.org"):
             with self.subTest(address=address):
                 result = self.run_script(self.installed / "phoneuse-mcp/configure.py", "--url", address)
                 self.assertNotEqual(0, result.returncode)
@@ -123,14 +124,14 @@ class IntegrationPackageTest(unittest.TestCase):
                     "available": True, "data_base64": base64.b64encode(b"image-fixture").decode(),
                     "scale_x": 2, "scale_y": 2, "offset_x": 0, "offset_y": 0}})
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        server = wrap_server(ThreadingHTTPServer(("127.0.0.1", 0), Handler))
         worker = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
         worker.start()
         try:
             config = self.root / "paired.json"
             config.write_text(json.dumps({"version": 2, "devices": {"test-phone": {
-                **identity, "url": f"http://127.0.0.1:{server.server_port}",
-                "token": "private-test-token", "client_id": "test-client"}}}), encoding="utf-8")
+                **identity, "url": f"https://127.0.0.1:{server.server_port}",
+                "tls_pin": PIN, "token": "private-test-token", "client_id": "test-client"}}}), encoding="utf-8")
             image = self.root / "截图.jpg"
             result = self.run_script(self.installed / "phone-use/scripts/phoneuse_client.py",
                                      "--config", config, "call", "observe", "--device-id", "test-phone",

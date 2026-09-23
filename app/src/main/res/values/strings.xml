@@ -15,13 +15,13 @@
     <string name="pause_control">Pause control</string>
     <string name="stop_service">Stop service</string>
     <string name="connection_pairing">Connection and pairing</string>
-    <string name="connection_help">Open this address on a computer on the same network, request pairing, then approve it here.</string>
+    <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. Direct browser access requires certificate trust.</string>
     <string name="pairing_persistence_help">Pair each client once. An enabled service restarts when the app opens; pause state and paired clients are preserved.</string>
     <string name="open_web_console">Open web console</string>
     <string name="pairing_requests">Pairing requests</string>
     <string name="pairing_source">Source: %1$s · Name provided by client</string>
     <string name="verification_code">Verification code: %1$s</string>
-    <string name="pairing_approval_help">Compare this code with the client. Approval remembers the client across restarts. You can revoke access at any time.</string>
+    <string name="pairing_approval_help">Compare every digit with the code shown by your client. Approve only if they match. Never let remote tools approve for you. You can revoke access at any time.</string>
     <string name="approve">Approve</string>
     <string name="deny">Deny</string>
     <string name="paired_clients">Paired clients</string>
@@ -29,7 +29,7 @@
     <string name="unpair">Unpair</string>
     <string name="notification_channel">Phone Use control</string>
     <string name="service_starting">Service starting</string>
-    <string name="http_start_failed">Could not start HTTP service: %1$s</string>
+    <string name="http_start_failed">Could not start HTTPS service: %1$s</string>
     <string name="client_storage_failed">Could not initialize client storage: %1$s</string>
     <string name="service_pairing_pending">Pairing request received · Open app to approve</string>
     <string name="service_paused">Control paused</string>

@@ -4,6 +4,7 @@ import ai.nidhoggfgg.phoneuse.core.*
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
 import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
+import ai.nidhoggfgg.phoneuse.server.PairingCrypto
 import android.os.SystemClock
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -16,6 +17,19 @@ import java.net.Socket
 /** Real production HTTP server running on Android. */
 @RunWith(AndroidJUnit4::class)
 class HttpServerInstrumentedTest {
+    private fun tlsSocket(identity: IdentityStore, port: Int): Socket {
+        val trust = object : javax.net.ssl.X509TrustManager {
+            override fun getAcceptedIssuers() = emptyArray<java.security.cert.X509Certificate>()
+            override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) = throw java.security.cert.CertificateException("Client certificates unsupported")
+            override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {
+                if (chain.isEmpty() || ai.nidhoggfgg.phoneuse.server.PairingCrypto.hash(chain[0].publicKey.encoded) != identity.tls.pin)
+                    throw java.security.cert.CertificateException("Wrong server key")
+            }
+        }
+        val context = javax.net.ssl.SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
+        return context.socketFactory.createSocket("127.0.0.1", port)
+    }
+
     @Test fun identityIsAttachedToRetainedActionsAndFailedFollowupObservations() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val identity = IdentityStore(context)
@@ -35,7 +49,7 @@ class HttpServerInstrumentedTest {
         val created = identity.pairing.create("Identity metadata test", "localhost")
         identity.pairing.decide(created.getString("pairing_id"), true)
         val credential = identity.pairing.poll(created.getString("pairing_id"), created.getString("pairing_secret"))
-        fun call(tool: String, args: JSONObject): JSONObject = Socket("127.0.0.1", 18444).use { socket ->
+        fun call(tool: String, args: JSONObject): JSONObject = tlsSocket(identity, 18444).use { socket ->
             socket.soTimeout = 10_000
             val body = json("tool" to tool, "arguments" to args).toString().toByteArray(Charsets.UTF_8)
             val header = "POST /api HTTP/1.1\r\nHost: 127.0.0.1:18444\r\nAuthorization: Bearer ${credential.getString("token")}\r\n" +
@@ -75,11 +89,11 @@ class HttpServerInstrumentedTest {
         var server = HttpServer(identity, controller, context.assets) {}
         var responseHeaders = ""
         fun request(path: String, body: JSONObject? = null, token: String? = null, site: String = "same-origin", cookie: String? = null): Pair<Int, String> {
-            return Socket("127.0.0.1", 18443).use { socket ->
+            return tlsSocket(identity, 18443).use { socket ->
                 socket.soTimeout = 10_000
                 val bytes = body?.toString()?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
                 val header = "${if (body == null) "GET" else "POST"} $path HTTP/1.1\r\nHost: 127.0.0.1:18443\r\n" +
-                    "Origin: http://127.0.0.1:18443\r\nSec-Fetch-Site: $site\r\nConnection: close\r\n" +
+                    "Origin: https://127.0.0.1:18443\r\nSec-Fetch-Site: $site\r\nConnection: close\r\n" +
                     (token?.let { "Authorization: Bearer $it\r\n" } ?: "") +
                     (cookie?.let { "Cookie: $it\r\n" } ?: "") +
                     (if (body != null) "Content-Type: application/json\r\nContent-Length: ${bytes.size}\r\n" else "") + "\r\n"
@@ -93,6 +107,14 @@ class HttpServerInstrumentedTest {
         var clientId: String? = null
         try {
             server.start(18443)
+            // A plaintext request cannot obtain a page or trigger pairing on the TLS listener.
+            Socket("127.0.0.1", 18443).use { plain ->
+                plain.soTimeout = 2000
+                plain.outputStream.write("GET /identity HTTP/1.1\r\nHost: 127.0.0.1:18443\r\n\r\n".toByteArray())
+                val response = runCatching { plain.inputStream.readBytes().toString(Charsets.UTF_8) }.getOrDefault("")
+                assertFalse(response.contains("200 OK"))
+                assertFalse(response.contains("device_id"))
+            }
             val page = request("/")
             assertEquals(200, page.first); assertTrue(page.second.contains("Phone Use"))
             assertEquals(200, request("/app.js").first)
@@ -108,13 +130,22 @@ class HttpServerInstrumentedTest {
             assertEquals(setOf("device_id", "name", "model", "android_version", "is_emulator", "service_instance_id"), publicIdentity.keys().asSequence().toSet())
             assertEquals(deviceId, IdentityStore(context).deviceIdentity.id)
             assertEquals(405, request("/identity", JSONObject()).first)
-            val pending = request("/pair/request", json("client_name" to "HTTP regression test"))
+            assertEquals(400, request("/pair/request", json("client_name" to "old protocol")).first)
+            val clientNonce = "11".repeat(32)
+            val pending = request("/pair/request", json("client_name" to "HTTPS regression test", "protocol" to PairingCrypto.PROTOCOL,
+                "commitment" to PairingCrypto.commitment(identity.tls.pin, clientNonce)))
             assertEquals(202, pending.first)
             val created = JSONObject(pending.second)
             assertEquals(deviceId, created.getString("device_id"))
             assertEquals(instanceId, created.getString("service_instance_id"))
             val args = json("pairing_id" to created.getString("pairing_id"), "pairing_secret" to created.getString("pairing_secret"))
-            assertEquals("pending", JSONObject(request("/pair/status", args).second).getString("status"))
+            assertEquals("committed", JSONObject(request("/pair/status", args).second).getString("status"))
+            assertTrue(identity.pairing.pending().isEmpty())
+            val revealArgs = JSONObject(args.toString()).put("client_nonce", clientNonce)
+            val reveal = JSONObject(request("/pair/reveal", revealArgs).second)
+            assertEquals("pending", reveal.getString("status"))
+            assertFalse(reveal.has("verification_code"))
+            assertEquals(PairingCrypto.code(identity.tls.pin, clientNonce, created.getString("server_nonce")), identity.pairing.pending().single().verificationCode)
             identity.pairing.decide(created.getString("pairing_id"), true)
             val credential = JSONObject(request("/pair/status", args).second)
             assertEquals(deviceId, credential.getString("device_id"))
@@ -140,7 +171,7 @@ class HttpServerInstrumentedTest {
             val browserPair = JSONObject(request("/browser/pair/status", args).second)
             assertFalse(browserPair.has("token")); assertFalse(browserPair.has("token_type"))
             val cookieHeader = responseHeaders.lineSequence().first { it.startsWith("Set-Cookie:") }.substringAfter(": ")
-            assertTrue(cookieHeader.contains("HttpOnly")); assertTrue(cookieHeader.contains("SameSite=Strict"))
+            assertTrue(cookieHeader.contains("Secure")); assertTrue(cookieHeader.contains("HttpOnly")); assertTrue(cookieHeader.contains("SameSite=Strict"))
             assertTrue(cookieHeader.contains("Max-Age=34560000"))
             val cookie = cookieHeader.substringBefore(';')
             assertTrue(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
@@ -148,7 +179,9 @@ class HttpServerInstrumentedTest {
             assertEquals(403, request("/api", json("tool" to "get_status"), site = "cross-site", cookie = cookie).first)
             // Recreate every service-owned object; completed pairing must outlive them all.
             server.stop(); controller.stop(); identity.pairing.clear()
+            val originalPin = identity.tls.pin
             identity = IdentityStore(context)
+            assertEquals(originalPin, identity.tls.pin)
             controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
             server = HttpServer(identity, controller, context.assets) {}
             server.start(18443)

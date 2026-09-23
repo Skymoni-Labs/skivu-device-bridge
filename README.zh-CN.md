@@ -42,11 +42,11 @@ App 支持英文、简体中文和跟随系统；Web 控制台跟随浏览器语
 
 ### 3. 配对客户端
 
-浏览器打开 `http://PHONE_IPV4:8443/`，请求配对，核对两端核对码，并在**手机上批准**。随后可在控制台浏览工具、编辑参数和查看响应。
+通过 Python 客户端或 MCP 桥接连接 `https://PHONE_IPV4:8443`。逐位核对手机上的八位码，在手机批准，并在控制端确认一致。无需安装证书或复制长指纹。浏览器直连需要单独建立证书信任。
 
 配对在客户端及 App 重启后保留，直到主动撤销或删除凭证。浏览器与 MCP 桥接默认分别配对。操作设备需要无障碍服务，配对和状态查询可在未开启无障碍时使用。
 
-**传输方式**：8443 端口使用明文 HTTP，并非 HTTPS。凭证、截图和动作请求不做传输加密，请在可信网络使用；项目不提供互联网中继。详见[连接说明](docs/usage.zh-CN.md)。
+**传输方式**：8443 端口使用 HTTPS，并绑定每台手机的公钥。首次需要双端核对八位码并确认，后续连接自动校验；旧 HTTP 凭证需重新配对。不提供互联网中继，详见[连接说明](docs/usage.zh-CN.md)。
 
 ## 接入 AI
 
@@ -60,7 +60,7 @@ npx skills add nidhoggfgg/PhoneUse --skill phone-use
 
 按提示选择 AI 客户端和安装范围，然后告诉 AI：
 
-> 使用 $phone-use 连接 http://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
+> 使用 $phone-use 连接 https://192.168.1.20:8443，显示核对码，等我在手机批准后查看当前界面。
 
 ### MCP
 
@@ -79,7 +79,7 @@ npx -y --package=github:nidhoggfgg/PhoneUse phone-use
 CLI 仅依赖 Python 3.10+ 标准库。在仓库根目录执行：
 
 ```sh
-python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
+python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
 python tools/phoneuse_client.py list-devices
 python tools/phoneuse_client.py call get_capabilities --device-id DEVICE_ID
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg

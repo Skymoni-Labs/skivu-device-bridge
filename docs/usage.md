@@ -4,7 +4,7 @@
 
 ## Web console
 
-Open the address shown on the phone, such as `http://192.168.1.20:8443/`. Request pairing, compare the codes, and approve on the phone. Search the API catalog, use the parameter form or JSON editor, and inspect the response. Screenshots appear only after an explicit observation request.
+Direct browser access uses `https://192.168.1.20:8443/` and requires independently established browser certificate trust. Its six-digit authorization code does not replace TLS authentication. For pairing without certificate installation, use MCP or the Python client below. The console still supports API forms, JSON editing and explicit screenshots.
 
 The browser stores authorization in an HttpOnly cookie. Closing a tab, restarting the browser, or restarting the app does not normally require pairing again. Revoke access on the phone or use the console's unpair action. Clearing cookies or changing the browser address creates a new pairing context. Long-term tokens are not displayed or exported by the console.
 
@@ -15,13 +15,13 @@ For actions, retain the same `request_id` when querying or retrying the same req
 Python 3.10+ is required; no third-party libraries are needed. Run from the repository root:
 
 ```sh
-python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
+python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
 python tools/phoneuse_client.py list-devices
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --full-tree
 ```
 
-`pair` displays a verification code and waits for approval. Completed pairings are reused; pending requests are saved so the client can resume claiming them. Pending requests expire after two minutes and are cleared by a phone-service restart.
+`pair` displays a locally computed eight-digit code. Compare every digit with the phone, approve there, then type `yes` in the CLI. With MCP, tell the AI you verified the match before it calls `phoneuse_connect` with `confirm_pairing:true`. Completed pairings reconnect automatically. Pending requests expire after two minutes and are cleared by a phone-service restart.
 
 The default registry is `~/.phoneuse.json`. Use `--config /absolute/path/registry.json` **before the subcommand** for a different location. Always pass the returned `DEVICE_ID`, including when only one device is connected. Update an address with `pair --url NEW_URL --device-id DEVICE_ID`. The bridge checks installation identity before sending stored credentials; an old configuration without a trusted device ID requires new approval.
 
@@ -56,7 +56,7 @@ Deleting the client configuration, clearing app data, uninstalling the phone app
 
 ## Network troubleshooting
 
-The service uses **plain HTTP on port 8443**. It does not encrypt credentials, screenshots, or actions. There is no cloud relay. Clients need a route to the phone's IPv4 address; domain names and reverse proxies are not supported by the current Host/Origin policy.
+The service uses **HTTPS on port 8443** with per-installation public-key binding. There is no HTTP fallback or cloud relay. Clients need a route to the phone IPv4; the current Host/Origin policy does not support domain aliases or reverse proxies. See [Transport security](transport-security.md).
 
 For optional local development forwarding with ADB:
 
@@ -64,9 +64,9 @@ For optional local development forwarding with ADB:
 adb forward tcp:8443 tcp:8443
 ```
 
-Then open `http://127.0.0.1:8443/`. On Windows PowerShell, use `curl.exe http://127.0.0.1:8443/` to avoid the `curl` alias. ADB is not required for normal network use.
+Then connect with `python tools/phoneuse_client.py pair --url https://127.0.0.1:8443`. Normal network use does not require ADB.
 
-When upgrading an older HTTPS configuration, change `https://` to `http://` and remove the unused `fingerprint` field. Native client credentials remain usable when identity requirements are met. Browsers treat the changed scheme as a new origin and need pairing again; uninstalling the app is unnecessary.
+Update both the phone and bridge. Existing HTTP addresses are migrated locally to HTTPS, but their old credentials are discarded; compare a new code and pair again. A changed TLS key is never automatically accepted. After independently verifying a deliberate reinstall/reset, revoke the old phone client and use `python tools/phoneuse_client.py forget-device --device-id DEVICE_ID` before re-pairing.
 
 If input is unavailable, check accessibility, screen lock, pause state, and client authorization. If the AI host runs in the cloud and cannot reach your LAN or run a local bridge, installing the integration alone will not provide access.
 

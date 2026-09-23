@@ -28,7 +28,7 @@ class MainActivity : AppCompatActivity() {
                 PhoneUseApp(
                     onStartService = ::startEndpoint,
                     onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                    onOpenWebConsole = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://127.0.0.1:8443/"))) }
+                    onOpenWebConsole = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://127.0.0.1:8443/"))) }
                 )
             }
         }

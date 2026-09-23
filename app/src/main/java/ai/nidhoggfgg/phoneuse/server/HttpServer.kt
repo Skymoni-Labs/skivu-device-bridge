@@ -13,9 +13,11 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.net.ServerSocket
 import java.net.Socket
+import javax.net.ssl.SSLServerSocket
+import javax.net.ssl.SSLSocket
 import java.util.UUID
 
-/** Small HTTP/1.1, one request per connection. Plain HTTP for the MVP. */
+/** HTTP/1.1 over TLS, one request per connection. Plaintext is never accepted. */
 class HttpServer(private val identities: IdentityStore, private val controller: DeviceController,
     private val assets: android.content.res.AssetManager,
     private val serviceInstanceId: String = UUID.randomUUID().toString(),
@@ -25,7 +27,9 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     @Volatile private var listener: ServerSocket? = null
     fun start(port: Int = 8443) {
-        val socket = ServerSocket()
+        val socket = (identities.tls.context.serverSocketFactory.createServerSocket() as SSLServerSocket).apply {
+            enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
+        }
         try {
             socket.reuseAddress = true
             socket.bind(InetSocketAddress("0.0.0.0", port), 16)
@@ -57,10 +61,11 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST",
         val cookie: String? = null)
     private fun cookie(token: String, port: Int) =
-        "phoneuse_client_$port=$token; Path=/; HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
+        "phoneuse_client_$port=$token; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
     private class HttpError(val status: Int, message: String) : RuntimeException(message)
     private fun handle(socket: Socket) {
         try {
+            (socket as SSLSocket).startHandshake()
             val input = BufferedInputStream(socket.inputStream)
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
             fun line(): String {
@@ -108,7 +113,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 return
             }
             val pairingPath = path.removePrefix("/browser")
-            val isPairing = pairingPath in setOf("/pair/request", "/pair/status")
+            val isPairing = pairingPath in setOf("/pair/request", "/pair/reveal", "/pair/status")
             if (!isPairing && path !in setOf("/api", "/api/tools", "/mcp", "/browser/session", "/browser/forget"))
                 throw HttpError(404, "Unknown endpoint")
             val cookieToken = headers["cookie"]?.split(';')?.map { it.trim() }
@@ -171,7 +176,16 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             val payload = try { JSONObject(raw) } catch (_: Exception) { throw HttpError(400, "Invalid JSON object") }
             val response = if (isPairing) {
                 try {
-                    if (pairingPath == "/pair/request") Response(202, pairingIdentity(identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty())))
+                    if (pairingPath == "/pair/request") {
+                        val browser = path.startsWith("/browser/")
+                        if (!browser && payload.optString("protocol") != PairingCrypto.PROTOCOL)
+                            fail("PAIRING_PROTOCOL_REQUIRED", "Update the client: secure commit/reveal pairing is required")
+                        Response(202, pairingIdentity(identities.pairing.create(payload.string("client_name", 80), socket.inetAddress.hostAddress.orEmpty(),
+                            if (browser) null else payload.string("commitment", 64), if (browser) null else identities.tls.pin)))
+                    } else if (pairingPath == "/pair/reveal") {
+                        Response(200, pairingIdentity(identities.pairing.reveal(payload.string("pairing_id", 80),
+                            payload.string("pairing_secret", 128), payload.string("client_nonce", 64))))
+                    }
                     else {
                         val result = pairingIdentity(identities.pairing.poll(payload.string("pairing_id", 80), payload.string("pairing_secret", 128)))
                         if (path.startsWith("/browser/") && result.optString("status") == "approved") {

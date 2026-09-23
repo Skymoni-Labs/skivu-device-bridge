@@ -15,10 +15,10 @@ This Skill works without MCP. Replace `CLIENT` with the absolute path to `script
 
 ```sh
 python CLIENT list-devices
-python CLIENT pair --url http://PHONE_IPV4:8443 --name "Phone Use Skill"
+python CLIENT pair --url https://PHONE_IPV4:8443 --name "Phone Use Skill"
 ```
 
-List existing devices first. Pair using the user's address if the target is absent; ask if the address is unknown or devices cannot be distinguished. `pair` prints the verification code to stderr and waits for phone approval. Tell the user the code and corresponding device; keep that process running during approval rather than repeatedly starting pairing. Resolve the actual cause of timeout, denial, or pause before continuing. The phone needs the service and accessibility enabled for device operations, and must be awake and unlocked for input.
+List existing devices first. Pair using the user's address if the target is absent; ask if the address is unknown or devices cannot be distinguished. `pair` prints a locally computed eight-digit code to stderr and waits for `yes` on stdin. Show the code and device to the user. Ask them to compare every digit with the phone and approve there. Only after the user explicitly confirms the match, send `yes` to the running process. Keep an interactive stdin open; do not pipe automatic confirmation or repeatedly restart pairing. With MCP, the equivalent second call is `phoneuse_connect(device_id=..., confirm_pairing=true)` after that same explicit user confirmation. Never infer confirmation from a remote approved status, elapsed time, or phone-control tools. Never read or click the protected phone pairing UI through remote tools. A changed TLS key must stop the connection; never automatically forget or replace its binding. Resolve the actual cause of timeout, denial, or pause before continuing. The phone needs the service and accessibility enabled for device operations, and must be awake and unlocked for input.
 
 Pairing returns an installation-level `device_id`; pass it explicitly on every call. Update a changed address with `pair --url NEW_URL --device-id ORIGINAL_ID`. The client manages `~/.phoneuse.json`; do not read, display, or upload tokens/claim secrets. For a separate registry, add `--config ABSOLUTE_PATH` before the subcommand and use that path consistently.
 

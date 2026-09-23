@@ -9,15 +9,15 @@ class BrowserAccessTest {
     private fun allowed(vararg extra: Pair<String, String>) = BrowserAccess.allowed(mapOf("host" to host, *extra), "192.168.1.20", 8443)
     @Test fun sameOriginAndNativeClientsAreAllowed() {
         assertTrue(allowed())
-        assertTrue(allowed("origin" to "http://$host", "sec-fetch-site" to "same-origin"))
+        assertTrue(allowed("origin" to "https://$host", "sec-fetch-site" to "same-origin"))
     }
     @Test fun foreignNullPlaintextAndWrongPortOriginsAreDenied() {
-        for (origin in listOf("null", "http://example.com", "https://$host", "http://192.168.1.20:443"))
+        for (origin in listOf("null", "https://example.com", "http://$host", "https://192.168.1.20:443"))
             assertFalse(allowed("origin" to origin))
         assertFalse(allowed("sec-fetch-site" to "cross-site"))
     }
     @Test fun domainHostCannotRebindToLocalAddress() {
-        assertFalse(allowed("host" to "attacker.example:8443", "origin" to "http://attacker.example:8443"))
+        assertFalse(allowed("host" to "attacker.example:8443", "origin" to "https://attacker.example:8443"))
         assertFalse(BrowserAccess.allowed(emptyMap(), "192.168.1.20", 8443))
     }
     @Test fun androidAppCanOpenPublicPageWithoutAllowingCrossSiteApiAccess() {

@@ -46,9 +46,9 @@ test('explicit Python executable is one argument, with no silent fallback', () =
 });
 
 test('bridge preserves unicode, spaces and metacharacters without shell evaluation', () => {
-  const args = bridgeArgs(['--name', '中文 & $(echo test)', '--config', 'C:/My Phone/配置.json', '--url', 'http://127.0.0.1:8443']);
+  const args = bridgeArgs(['--name', '中文 & $(echo test)', '--config', 'C:/My Phone/配置.json', '--url', 'https://127.0.0.1:8443']);
   assert.deepEqual(args.slice(1), ['--config', 'C:/My Phone/配置.json', 'mcp-stdio', '--name',
-    '中文 & $(echo test)', '--url', 'http://127.0.0.1:8443']);
+    '中文 & $(echo test)', '--url', 'https://127.0.0.1:8443']);
   assert.throws(() => bridgeArgs(['--config']), /requires a path/);
 });
 

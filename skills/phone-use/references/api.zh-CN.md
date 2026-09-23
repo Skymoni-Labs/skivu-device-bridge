@@ -4,32 +4,21 @@
 
 ## 接入与身份
 
-监听 IPv4 `0.0.0.0:8443`，使用明文 HTTP，不生成证书、不要求指纹校验。端口沿用 8443，所有入口改用 `http://`。配对授权、Bearer token 和撤销机制保留。
+监听 IPv4 `0.0.0.0:8443`，**仅支持 TLS 1.2/1.3 HTTPS**。每次安装在 Android Keystore 内生成不可导出的独立密钥与自签证书。原生客户端通过短码核对绑定 SHA-256 SPKI 公钥指纹，无需公共 CA 或复制长指纹。旧 HTTP 凭证失效，需重新配对。
 
-### 配对请求 → 手机批准 → 领取凭证
+### 提交承诺 → 揭示随机数 → 双端核对确认 → 批准 → 领取
 
-以下是原生客户端内部协议。AI 使用 MCP stdio 的 `phoneuse_connect`，无需直接处理领取秘密或 token。已完成的授权无会话期限，App/服务重启后仍有效；关闭连接不解除配对。
+AI 使用 `phoneuse_connect`，不直接处理凭证。首次返回桥接本地计算的八位码。用户逐位对照手机并在手机批准，再明确告诉 AI 核对一致，AI 才能携带 `device_id` 和 `confirm_pairing:true` 继续。服务器返回 `approved` 不能代替人的核对确认。CLI 的 `pair` 展示核对码后要求输入 `yes`。已配对设备重连无需再次确认。
 
-旧的 `POST /pair` 和配对码输入流程已移除；已有客户端凭证仍有效。
+原生协议详见[传输安全](transport-security.zh-CN.md)。包括首次连接在内，所有请求使用 HTTPS：
 
-1. `POST /pair/request`，正文 `{"client_name":"laptop"}`，无须 Bearer token。HTTP 202 返回：
+1. 无凭证 `GET /identity` 从 TLS 连接取得候选公钥。后续每个连接均在发送 HTTP 数据前验证该指纹。
+2. `POST /pair/request` 携带 `client_name`、`protocol:"phoneuse-sas-v1"`、`commitment`。HTTP 202 返回 `status:"committed"`、`protocol`、`pairing_id`、`pairing_secret`、`server_nonce`、`expires_in:120`、`poll_interval:2`，不返回核对码。
+3. 桥接固定以上内容，向 `POST /pair/reveal` 提交 `pairing_id`、`pairing_secret`、`client_nonce`。验证成功返回 `status:"pending"`，手机才显示批准界面。双方独立计算八位码。
+4. 两端完成核对确认后，用 `pairing_id` 和 `pairing_secret` 轮询 `POST /pair/status`。状态包括 `committed`、`pending`、`denied`、`approved`。批准后附带 `client_id`、`token`、`token_type:"Bearer"`、`api_path:"/api"`、`mcp_path:"/mcp"`。
+5. 在已验证公钥的 HTTPS 连接中发送 `Authorization: Bearer TOKEN`。核对码或秘密不得放入 URL。
 
-   ```json
-   {"pairing_id":"UUID","pairing_secret":"随机秘密","verification_code":"123456","status":"pending","expires_in":120,"poll_interval":2}
-   ```
-
-2. 手机 App 显示客户端自报名称、实际来源 IP、核对码和剩余时间。用户核对两端核对码，选择授权或拒绝。没有远程批准接口；通知栏提示点击打开 App。
-3. 客户端每两秒 `POST /pair/status`，正文 `{"pairing_id":"UUID","pairing_secret":"随机秘密"}`。HTTP 200 返回 `{"status":"pending"}` 或 `{"status":"denied"}`。批准后返回：
-
-   ```json
-   {"status":"approved","client_id":"UUID","token":"TOKEN","token_type":"Bearer","api_path":"/api","mcp_path":"/mcp"}
-   ```
-
-4. 此 token 可同时用于 API 和 MCP 的 `Authorization: Bearer TOKEN`。
-
-请求从创建起两分钟过期（批准不延长），过期或服务重启返回 `PAIRING_EXPIRED`。`pairing_secret` 是领取凭证的秘密，不能用核对码代替，也不能写入 URL。为允许丢包后的重复领取，同一请求在过期前返回相同凭证，不会重复签发。仅 token 摘要持久化；完整配对响应仅暂存在内存。关闭服务清空请求，已配对凭证仍保留。
-
-最多保留 16 个请求和 16 个客户端；新请求全局间隔至少五秒，超限 HTTP 429 / `PAIRING_BUSY`。错误 secret 返回 `PAIRING_DENIED`，参数错误返回 `INVALID_ARGUMENT`。手机可撤销单个凭证，撤销也会清除该请求暂存的 token，当前控制者被撤销时排队输入失效。备份和设备迁移不包含凭证。
+请求创建两分钟后过期，批准不延长时限；服务重启清除请求。期限内重复领取返回同一凭证，手机仅持久保存 token 摘要。最多 16 个请求、16 个客户端，新请求全局间隔至少五秒。承诺验证失败永久拒绝该请求；未完成揭示的请求不可批准。撤销授权清除可领取凭证，并使排队输入失效。
 
 ### Web 入口与传输
 
@@ -37,21 +26,21 @@
 
 `GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `http://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `https://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
 
-浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，请求参数与原生配对接口一致。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。当前使用 HTTP，因此不设置 Secure。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
+浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 
 - `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权并续期/清除 Cookie，不签发新身份。
 - `POST /browser/session`：携带已有 Bearer 或 Cookie，正文 `{}`，换成同一身份的持久 Cookie。用于旧版打开标签页的自动迁移，成功后删除 sessionStorage 中的旧 token。
 - `POST /browser/forget`：需认证，正文 `{}`；撤销该客户端、清除 Cookie 与配对暂存响应，使排队动作失效。关闭页面本身不调用此接口。
 
-页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧导出配置仍可由 Python 使用。
+页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧 HTTP 导出凭证不可复用，必须重新配对。
 
 ### AI 的持久连接
 
-`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
+`python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
 
-`GET /identity` 无需凭证，返回 `device_id/name/model/android_version/is_emulator/service_instance_id`。App 安装级 UUID 与地址分离，名称可在手机本地修改；身份与配对偏好设置排除备份/设备迁移。桥接在发送认证请求前先验证公开设备 ID，地址对应其他安装时不发送旧 token。换地址重连也必须匹配已保存身份。旧配置缺少可信设备 ID 时需要重新在手机批准，不能只凭 IP 迁移凭证。此预检用于防止意外连错设备；当前明文 HTTP 不提供对恶意网络端点的身份认证。
+`GET /identity` 无需凭证，返回 `device_id/name/model/android_version/is_emulator/service_instance_id`。App 安装级 UUID 与地址分离，名称可在手机本地修改；身份与配对偏好设置排除备份/设备迁移。桥接在发送认证请求前先验证公开设备 ID，地址对应其他安装时不发送旧 token。换地址重连也必须匹配已保存身份。旧配置缺少可信设备 ID 时需要重新在手机批准，不能只凭 IP 迁移凭证。每个原生连接还必须在发送 HTTP 数据前验证保存的 TLS 公钥。旧 HTTP 凭证必须重新短码配对；密钥变化时拒绝连接，不会自动替换指纹。
 
 配对请求/领取结果含设备身份；未完成请求也持久保存，批准后原子保存凭证。MCP 结果不返回 token 或领取秘密。不同设备独立连接、锁与执行队列，可并行；同设备调用串行。单台离线不阻塞其他设备。观察 ID 同时绑定客户端、设备服务运行实例及无障碍服务实例，跨设备、跨客户端及重启后的引用拒绝执行。
 

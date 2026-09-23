@@ -4,38 +4,29 @@
 
 ## Access and identity
 
-The server listens on IPv4 `0.0.0.0:8443` using **plain HTTP**. It does not generate certificates or check certificate fingerprints. Pairing, Bearer authorization, and revocation remain required.
+The server listens on IPv4 `0.0.0.0:8443` using **TLS 1.2/1.3 only**. Each installation creates a non-exportable Android Keystore key and self-signed certificate. Native clients authenticate its SHA-256 SPKI pin through short-code pairing; no public CA or copied fingerprint is needed. HTTP-era credentials are invalidated and require new pairing.
 
-### Request pairing → approve on the phone → claim credentials
+### Commit → reveal → compare on both sides → approve → claim
 
-This is the native-client protocol. AI clients should use the stdio bridge's `phoneuse_connect` instead of handling secrets. Completed authorization has no session expiry and survives app/service restarts. Closing a connection does not unpair. The old `POST /pair` and code-entry flow have been removed.
+AI clients use `phoneuse_connect` rather than handling credentials. The first call returns a locally computed eight-digit code. The user compares every digit against the phone and approves there, then explicitly tells the AI the codes match. Only then call `phoneuse_connect` with `device_id` and `confirm_pairing:true`. A remote `approved` response alone is not evidence of a human comparison. CLI `pair` asks for `yes` after showing the code. Existing pairings reconnect without confirmation.
 
-1. Send `POST /pair/request` with `{"client_name":"laptop"}`, without Bearer authorization. HTTP 202 returns:
+The native wire protocol is specified in [Transport security](transport-security.md). All messages, including first contact, use HTTPS:
 
-   ```json
-   {"pairing_id":"UUID","pairing_secret":"RANDOM_SECRET","verification_code":"123456","status":"pending","expires_in":120,"poll_interval":2}
-   ```
+1. A credential-free `GET /identity` observes the TLS public key. Every following socket verifies the candidate pin before sending HTTP bytes.
+2. `POST /pair/request` with `client_name`, `protocol:"phoneuse-sas-v1"` and `commitment` returns HTTP 202 with `status:"committed"`, `protocol`, `pairing_id`, `pairing_secret`, `server_nonce`, `expires_in:120` and `poll_interval:2`. No verification code is returned.
+3. The bridge freezes that transcript and sends `POST /pair/reveal` with `pairing_id`, `pairing_secret` and `client_nonce`. A valid reveal returns `status:"pending"` and enables the phone approval UI. Both endpoints independently compute the eight-digit code.
+4. After comparison and confirmation on both sides, poll `POST /pair/status` with `pairing_id` and `pairing_secret`. States are `committed`, `pending`, `denied`, or `approved`. Approval adds `client_id`, `token`, `token_type:"Bearer"`, `api_path:"/api"`, and `mcp_path:"/mcp"`.
+5. Use `Authorization: Bearer TOKEN` over pinned HTTPS. Never send the code or secrets in URLs.
 
-2. The phone shows the client-supplied name, actual source IP, verification code, and remaining time. The user compares codes and approves or denies locally. There is no remote approval endpoint; the notification opens the app.
-3. Poll `POST /pair/status` every two seconds with `{"pairing_id":"UUID","pairing_secret":"RANDOM_SECRET"}`. HTTP 200 returns `{"status":"pending"}`, `{"status":"denied"}`, or, after approval:
-
-   ```json
-   {"status":"approved","client_id":"UUID","token":"TOKEN","token_type":"Bearer","api_path":"/api","mcp_path":"/mcp"}
-   ```
-
-4. Use `Authorization: Bearer TOKEN` for both API and MCP calls.
-
-Requests expire two minutes after creation; approval does not extend that time. Expiry or service restart returns `PAIRING_EXPIRED`. The `pairing_secret` is required to claim credentials; the verification code cannot replace it, and secrets must not be placed in URLs. Repeated claims before expiry return the same credential. Only token digests are persisted; full pairing responses remain temporarily in memory. Stopping the service clears pending requests but preserves completed authorization.
-
-Limits: 16 pairing requests, 16 clients, and at least five seconds between new requests globally. Exceeding the limit returns HTTP 429 / `PAIRING_BUSY`. An incorrect secret returns `PAIRING_DENIED`; invalid parameters return `INVALID_ARGUMENT`. Revoking a client clears its temporary token response and invalidates its queued inputs. Credentials are excluded from backup and device migration.
+Requests expire two minutes after creation; approval does not extend that time. A service restart clears them. Repeat claims before expiry return the same credential. Only token digests are persisted on the phone. Limits are 16 requests, 16 clients, and at least five seconds between requests globally. An invalid commitment reveal permanently denies that request. A request cannot be approved before a valid reveal. Revocation clears retrievable credentials and invalidates queued inputs.
 
 ### Web endpoints and transport
 
 `GET /` serves a public console without credentials or device data. Navigation from another page, including `Sec-Fetch-Site: cross-site`, is allowed, subject to Host validation. Scripts, pairing, and API requests retain same-origin checks. Framing is forbidden. `GET /app.js` is public; authenticated `GET /api/tools` returns `{"tools":[...]}` using the same parameter definitions as MCP `tools/list`.
 
-API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `http://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
+API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `https://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
 
-Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with the same request parameters. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. HTTP means it cannot use Secure. JavaScript does not read the long-term credential.
+Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. This requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
 
 - `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates and renews or clears the cookie without issuing a new identity.
 - `POST /browser/session`: authenticated Bearer or cookie plus `{}` exchanges the same identity for a persistent cookie. Old open tabs use it to migrate and delete the old sessionStorage token.
@@ -45,9 +36,9 @@ The console checks connections at startup, focus, and network recovery. Failed s
 
 ### Persistent AI connections
 
-`python tools/phoneuse_client.py mcp-stdio --url http://PHONE:8443` can initialize before pairing or while offline. One bridge manages multiple devices. `phoneuse_connect` adds by address or reconnects by `device_id`; `phoneuse_list_devices` reports installation ID, name, model, Android version, address, online status, and emulator status. Every device call must specify `device_id`; there is no shared current device. Paired tools are exposed directly; `phoneuse_call` is a fallback for hosts that do not refresh their tool list.
+`python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` can initialize before pairing or while offline. One bridge manages multiple devices. `phoneuse_connect` adds by address or reconnects by `device_id`; `phoneuse_list_devices` reports installation ID, name, model, Android version, address, online status, and emulator status. Every device call must specify `device_id`; there is no shared current device. Paired tools are exposed directly; `phoneuse_call` is a fallback for hosts that do not refresh their tool list.
 
-Public `GET /identity` returns `device_id/name/model/android_version/is_emulator/service_instance_id`. The installation UUID is independent of the address and local display name. Identity and pairing preferences are excluded from backup/migration. Before sending credentials, the bridge verifies the public device ID; it refuses to reuse a token for a different installation at the same address. Address changes must match saved identity. Legacy configurations without trusted IDs need new local approval. This prevents accidental device mismatch; plain HTTP does not authenticate a malicious network endpoint.
+Public `GET /identity` returns `device_id/name/model/android_version/is_emulator/service_instance_id`. The installation UUID is independent of the address and local display name. Identity and pairing preferences are excluded from backup/migration. Before sending credentials, the bridge verifies the public device ID; it refuses to reuse a token for a different installation at the same address. Address changes must match saved identity. Legacy configurations without trusted IDs need new local approval. Every native request also verifies the saved TLS public key before sending HTTP data. HTTP-era credentials require new short-code pairing. Key mismatches fail closed and never overwrite the saved pin.
 
 Pairing responses include device identity. Pending requests are persisted, and approved credentials are saved atomically. MCP results never return tokens or claim secrets. Devices have independent connections and locks; calls serialize per device and can run concurrently across devices. One offline phone does not block others. Observation IDs bind to a client, phone-service instance, and accessibility-service instance; cross-device, cross-client, and post-restart references are rejected.
 

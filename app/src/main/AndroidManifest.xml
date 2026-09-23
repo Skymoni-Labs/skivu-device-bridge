@@ -18,7 +18,7 @@
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:usesCleartextTraffic="true"
+        android:usesCleartextTraffic="false"
         android:icon="@mipmap/ic_phone_use"
         android:label="@string/app_name"
         android:localeConfig="@xml/locales_config"
@@ -37,7 +37,7 @@
         </service>
         <service android:name=".PhoneUseService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="User-started authenticated local HTTP phone control via accessibility, with persistent pause and stop controls" />
+                android:value="User-started authenticated local HTTPS phone control via accessibility, with persistent pause and stop controls" />
         </service>
         <activity
             android:name=".MainActivity"

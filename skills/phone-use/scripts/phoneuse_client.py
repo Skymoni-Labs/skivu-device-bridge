@@ -10,9 +10,12 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import copy
 import hashlib
+import hmac
 import http.client
 import json
 import os
+import secrets
+import ssl
 from pathlib import Path
 import sys
 import tempfile
@@ -37,12 +40,70 @@ class BridgeError(RuntimeError):
 
 def origin(value):
     if "://" not in value:
-        value = "http://" + value
+        value = "https://" + value
     url = urlsplit(value)
-    if url.scheme != "http" or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment:
-        raise ValueError("address must be an http://host:port origin")
+    if url.scheme != "https" or not url.hostname or url.username or url.password or url.path not in ("", "/") or url.query or url.fragment or url.port == 0:
+        raise ValueError("address must be an https://host:port origin; plaintext HTTP is disabled")
     host = f"[{url.hostname}]" if ":" in url.hostname else url.hostname
-    return f"http://{host}:{url.port or 8443}"
+    return f"https://{host}:{url.port or 8443}"
+
+
+PAIRING_PROTOCOL = "phoneuse-sas-v1"
+
+
+def checked_hex(value):
+    if not isinstance(value, str) or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
+        raise ValueError("Expected 32 bytes of lowercase hex")
+    return value
+
+
+def pairing_digest(purpose, *fields):
+    return hashlib.sha256("\0".join((PAIRING_PROTOCOL, purpose, *map(checked_hex, fields))).encode("ascii")).digest()
+
+
+def pairing_code(pin, client_nonce, server_nonce):
+    return f"{int.from_bytes(pairing_digest('sas', pin, client_nonce, server_nonce)[:4], 'big') % 100_000_000:08d}"
+
+
+def public_key_pin(certificate):
+    """Extract the X.509 SubjectPublicKeyInfo DER (already parsed by OpenSSL during TLS).
+
+    A bounded DER reader keeps the portable bridge standard-library-only. This is
+    not a certificate validator: TLS verifies key possession, pairing authenticates
+    this SPKI, and every subsequent socket is checked against the saved pin.
+    """
+    def field(offset, limit):
+        start = offset
+        if offset + 2 > limit:
+            raise ValueError("Truncated TLS certificate")
+        tag, size = certificate[offset:offset + 2]
+        offset += 2
+        if size & 128:
+            count = size & 127
+            if not 1 <= count <= 4 or offset + count > limit:
+                raise ValueError("Invalid certificate DER length")
+            size = int.from_bytes(certificate[offset:offset + count], "big")
+            offset += count
+        end = offset + size
+        if end > limit:
+            raise ValueError("Truncated TLS certificate field")
+        return tag, start, offset, end
+    tag, _, body, end = field(0, len(certificate))
+    if tag != 0x30 or end != len(certificate):
+        raise ValueError("Invalid X.509 certificate")
+    tag, _, cursor, limit = field(body, end)
+    if tag != 0x30:
+        raise ValueError("Invalid TBSCertificate")
+    if cursor >= limit:
+        raise ValueError("Empty TBSCertificate")
+    if certificate[cursor] == 0xA0:  # optional explicit version
+        cursor = field(cursor, limit)[3]
+    for _ in range(5):  # serial, signature, issuer, validity, subject
+        cursor = field(cursor, limit)[3]
+    tag, start, _, end = field(cursor, limit)
+    if tag != 0x30:
+        raise ValueError("Invalid SubjectPublicKeyInfo")
+    return hashlib.sha256(certificate[start:end]).hexdigest()
 
 
 def http_request(config, endpoint, payload=None, authenticate=True, method="POST"):
@@ -50,7 +111,19 @@ def http_request(config, endpoint, payload=None, authenticate=True, method="POST
     # Standalone conditional reads can use a 60 s budget plus queueing time.
     # Actions still return their original request state after the 15 s window.
     tool = (payload or {}).get("tool") if endpoint == "/api" else ((payload or {}).get("params") or {}).get("name")
-    connection = http.client.HTTPConnection(url.hostname, url.port or 8443, timeout=90 if tool == "observe" else 25)
+    pin = config.get("tls_pin")
+    bootstrap = config.get("_bootstrap") and endpoint == "/identity" and method == "GET" and not authenticate
+    if not pin and not bootstrap:
+        raise BridgeError("TLS_PAIRING_REQUIRED", "Pair again and compare the codes on the phone; unbound credentials cannot be sent", action_executed=False)
+    if pin:
+        checked_hex(pin)
+    # Public CA validation is replaced by mandatory SPKI verification before HTTP
+    # bytes are sent. Only a credential-free identity probe may bootstrap a pin.
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    connection = http.client.HTTPSConnection(url.hostname, url.port or 8443, context=context, timeout=90 if tool == "observe" else 25)
     headers = {"Accept": "application/json, text/event-stream"}
     if payload is not None:
         headers["Content-Type"] = "application/json"
@@ -59,6 +132,10 @@ def http_request(config, endpoint, payload=None, authenticate=True, method="POST
     if endpoint == "/mcp":
         headers["MCP-Protocol-Version"] = "2025-11-25"
     try:
+        connection.connect()
+        actual_pin = public_key_pin(connection.sock.getpeercert(binary_form=True))
+        if pin and not hmac.compare_digest(pin, actual_pin):
+            raise BridgeError("TLS_IDENTITY_MISMATCH", "Phone TLS key changed. No credentials sent. Verify the device independently before explicitly forgetting its binding and pairing again", action_executed=False)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
         connection.request(method, endpoint, body, headers)
         response = connection.getresponse()
@@ -72,6 +149,8 @@ def http_request(config, endpoint, payload=None, authenticate=True, method="POST
             raise ValueError("Expected a JSON object from the phone")
         if response.status not in (200, 202):
             raise HttpError(response.status, value)
+        if endpoint == "/identity":
+            value["_tls_pin"] = actual_pin  # Local socket evidence; overwrite any server-supplied field.
         return value
     finally:
         connection.close()
@@ -81,14 +160,14 @@ def post(config, endpoint, payload, authenticate=True):
     return http_request(config, endpoint, payload, authenticate)
 
 
-def identify(address):
+def identify(address, tls_pin=None):
     # Do not put any credential in this config, even when reconnecting.
-    value = http_request({"url": origin(address)}, "/identity", authenticate=False, method="GET")
+    value = http_request({"url": origin(address), "tls_pin": tls_pin, "_bootstrap": tls_pin is None}, "/identity", authenticate=False, method="GET")
     for field in ("device_id", "service_instance_id"):
         if not isinstance(value.get(field), str) or not value[field]:
             raise BridgeError("IDENTITY_UNAVAILABLE", f"The phone must provide {field}; update Phone Use and pair again", action_executed=False)
-    return {key: value.get(key) for key in
-            ("device_id", "name", "model", "android_version", "is_emulator", "service_instance_id")}
+    return {**{key: value.get(key) for key in
+            ("device_id", "name", "model", "android_version", "is_emulator", "service_instance_id")}, "tls_pin": value["_tls_pin"]}
 
 
 @contextmanager
@@ -139,18 +218,20 @@ class ConfigStore:
         if value.get("version") == 2:
             if not isinstance(value.get("devices"), dict):
                 raise ValueError("Invalid device registry")
+            for device in value["devices"].values():
+                if not device.get("tls_pin") or device.get("url", "").startswith("http://"):
+                    for key in ("token", "client_id", "pending", "tls_pin"):
+                        device.pop(key, None)
+                    device["url"] = origin(device["url"].replace("http://", "https://", 1))
             return value
         if value.get("version") is not None:
             raise ValueError("Unsupported Phone Use config version")
         upgraded = {"version": 2, "devices": {}}
         if value.get("url"):
-            upgraded["legacy_address"] = origin(value["url"])
+            upgraded["legacy_address"] = origin(value["url"].replace("http://", "https://", 1))
+            upgraded["legacy_pairing_requires_approval"] = bool(value.get("token") or value.get("pending"))
             if isinstance(value.get("device_id"), str) and value["device_id"]:
-                upgraded["devices"][value["device_id"]] = value
-            else:
-                # Old exports have no verified installation identity. Do not
-                # send an old token to whichever phone now happens to have its IP.
-                upgraded["legacy_pairing_requires_approval"] = bool(value.get("token") or value.get("pending"))
+                upgraded["devices"][value["device_id"]] = {"device_id": value["device_id"], "url": upgraded["legacy_address"]}
         return upgraded
 
     def _write(self, value):
@@ -219,7 +300,7 @@ class Connection:
 
     def _verify(self, device_id, device):
         try:
-            identity = identify(device["url"])
+            identity = identify(device["url"], device.get("tls_pin"))
         except Exception as error:
             if isinstance(error, BridgeError):
                 error.value["device_id"] = device_id
@@ -304,24 +385,30 @@ class Connection:
         with self.device_lock(device_id):
             return self._send_locked(device_id, endpoint, payload)
 
-    def connect(self, address=None, device_id=None):
+    def connect(self, address=None, device_id=None, confirm_pairing=False):
+        if not isinstance(confirm_pairing, bool):
+            raise ValueError("confirm_pairing must be a boolean")
         config = self.config
         if address is None and device_id:
             address = self._device(device_id)["url"]
         address = address or self.url or config.get("legacy_address")
         if not address:
-            raise ValueError("Specify address (http://PHONE:8443), or device_id to reconnect")
+            raise ValueError("Specify address (https://PHONE:8443), or device_id to reconnect")
         address = origin(address)
-        identity = identify(address)
+        known = config["devices"].get(device_id, {}) if device_id else next(
+            (device for device in config["devices"].values() if device["url"] == address), {})
+        identity = identify(address, known.get("tls_pin"))
         actual = identity["device_id"]
         if device_id and device_id != actual:
             raise BridgeError("DEVICE_IDENTITY_MISMATCH", "Address does not match the requested installation; no saved credential was sent", device_id,
                               actual_device_id=actual, action_executed=False)
         with self.device_lock(actual):
             previous = self.config["devices"].get(actual, {})
+            if previous.get("tls_pin") and not hmac.compare_digest(previous["tls_pin"], identity["tls_pin"]):
+                raise BridgeError("TLS_IDENTITY_MISMATCH", "Saved phone TLS key differs; binding was not changed", actual, action_executed=False)
             self._update(actual, url=address, **{k: v for k, v in identity.items() if k != "device_id"})
             device = self._device(actual)
-            shown = {**identity, "address": address}
+            shown = {**{k: v for k, v in identity.items() if k != "tls_pin"}, "address": address}
             if device.get("token"):
                 status = self._send_locked(actual, "/api", {"tool": "get_status"})
                 return {**shown, "service_instance_id": status["service_instance_id"], "status": "paired",
@@ -331,6 +418,11 @@ class Connection:
                 self._forget_pairing(actual)
                 raise BridgeError("PAIRING_EXPIRED", "Pairing expired or the service restarted; connect again to request approval", actual, action_executed=False)
             if pending:
+                if confirm_pairing:
+                    pending["user_confirmed"] = True
+                    self._update(actual, pending=pending)
+                if not pending.get("user_confirmed"):
+                    return self._pending_result(shown, pending)
                 verified = self._verify(actual, device)
                 if verified["service_instance_id"] != pending["service_instance_id"]:
                     self._forget_pairing(actual)
@@ -355,13 +447,45 @@ class Connection:
                             current.pop("legacy_pairing_requires_approval", None)
                     return {**shown, "status": "paired", "message": "Pairing saved for this installation; use its device_id on every call."}
             else:
-                pending = post({"url": address}, "/pair/request", {"client_name": self.name}, authenticate=False)
+                if confirm_pairing:
+                    raise BridgeError("PAIRING_CONFIRMATION_REQUIRED", "First display the new code, then ask the user to compare it; a new pairing cannot be pre-approved", actual, action_executed=False)
+                nonce = secrets.token_hex(32)
+                started = time.time()
+                pending = post(device, "/pair/request", {"client_name": self.name, "protocol": PAIRING_PROTOCOL,
+                    "commitment": pairing_digest("commit", device["tls_pin"], nonce).hex()}, authenticate=False)
                 self._check_response(pending, actual, identity["service_instance_id"])
-                pending.update(deadline=time.time() + pending["expires_in"], service_instance_id=identity["service_instance_id"])
+                if pending.get("protocol") != PAIRING_PROTOCOL or pending.get("status") != "committed":
+                    raise BridgeError("PAIRING_PROTOCOL_REQUIRED", "Phone does not support secure pairing; update it", actual, action_executed=False)
+                # Freeze the transcript before revealing the committed nonce. Never
+                # display a verification code supplied by the remote endpoint.
+                code = pairing_code(device["tls_pin"], nonce, pending["server_nonce"])
+                for field, maximum in (("pairing_id", 80), ("pairing_secret", 128)):
+                    if not isinstance(pending.get(field), str) or not 1 <= len(pending[field]) <= maximum:
+                        raise BridgeError("INVALID_REMOTE_RESPONSE", "Invalid pairing claim parameters", actual, action_executed=False)
+                revealed = post(device, "/pair/reveal", {"pairing_id": pending["pairing_id"],
+                    "pairing_secret": pending["pairing_secret"], "client_nonce": nonce}, authenticate=False)
+                self._check_response(revealed, actual, identity["service_instance_id"])
+                if revealed.get("status") != "pending":
+                    raise BridgeError("PAIRING_DENIED", "Pairing reveal rejected", actual, action_executed=False)
+                # This is local security state. Never persist arbitrary response
+                # fields (especially a forged user_confirmed/deadline/token).
+                pending = {"pairing_id": pending["pairing_id"], "pairing_secret": pending["pairing_secret"],
+                           "verification_code": code, "deadline": started + 120, "poll_interval": 2,
+                           "service_instance_id": identity["service_instance_id"], "user_confirmed": False}
                 self._update(actual, pending=pending)
-            return {**shown, "status": "pending", "verification_code": pending["verification_code"],
-                    "poll_interval": pending["poll_interval"],
-                    "message": "Approve this code on the named phone, then connect again with its device_id. Never read or request a token."}
+            return self._pending_result(shown, pending)
+
+    @staticmethod
+    def _pending_result(shown, pending):
+        return {**shown, "status": "pending", "verification_code": pending["verification_code"],
+                "confirmation_required": not pending.get("user_confirmed", False), "poll_interval": pending["poll_interval"],
+                "message": "Show this locally computed 8-digit code. Ask the user to compare ALL digits with the phone and approve there only if equal. Only after the user explicitly confirms the match, connect again with device_id and confirm_pairing=true. Never infer confirmation from network status, elapsed time, or remote phone tools. Never read or request a token."}
+
+    def forget_device(self, device_id):
+        with self.device_lock(device_id), self.store.transaction(write=True) as config:
+            config["devices"].pop(device_id, None)
+        self._catalogs.pop(device_id, None)
+        return {"device_id": device_id, "status": "forgotten", "message": "Local binding removed. Revoke this client on the phone as well; the next connection requires a new code comparison."}
 
     def list_devices(self, refresh=True):
         config = self.config
@@ -371,7 +495,7 @@ class Connection:
             result = {**metadata, "device_id": device_id, "address": saved["url"], "paired": bool(saved.get("token")), "online": None}
             if refresh:
                 try:
-                    identity = identify(saved["url"])
+                    identity = identify(saved["url"], saved.get("tls_pin"))
                     if identity["device_id"] != device_id:
                         raise BridgeError("DEVICE_IDENTITY_MISMATCH", "Address belongs to another installation", device_id)
                     result.update(identity, online=True)
@@ -525,8 +649,8 @@ def local_tool(name, description, properties, required=()):
 
 
 CONNECTION_TOOLS = [
-    local_tool("phoneuse_connect", "Register/connect an address, or reconnect a device_id. Approve first pairing on that phone; call again after approval. Never returns credentials.",
-               {"address": {"type": "string"}, **DEVICE_FIELDS}),
+    local_tool("phoneuse_connect", "Connect over pinned HTTPS. First show the 8-digit verification code to the user. Set confirm_pairing=true ONLY after the user explicitly says all digits match the phone and approves there; never infer this from a server response or inspect/approve through remote tools. Never returns credentials.",
+               {"address": {"type": "string"}, **DEVICE_FIELDS, "confirm_pairing": {"type": "boolean", "default": False}}),
     local_tool("phoneuse_list_devices", "List registered identities, names, models, Android versions, addresses, emulator flags and live reachability; no credentials.",
                {"refresh": {"type": "boolean", "default": True}}),
     local_tool("phoneuse_call", "Call one phone tool by explicit device_id. Use acquire_device/release_device for optional developer reservations. Never replay uncertain actions.",
@@ -698,6 +822,8 @@ def main():
     pair.add_argument("--name", default="Python client")
     listing = sub.add_parser("list-devices")
     listing.add_argument("--cached", action="store_true", help="Do not probe reachability")
+    forget = sub.add_parser("forget-device", help="Explicitly remove a local TLS binding after independently verifying a key change")
+    forget.add_argument("--device-id", required=True)
     call = sub.add_parser("call")
     call.add_argument("tool")
     call.add_argument("arguments", nargs="?", default="{}", help="JSON object, or @path to a UTF-8 JSON file")
@@ -718,13 +844,19 @@ def main():
     connection = Connection(args.config, getattr(args, "url", None), getattr(args, "name", "Python client"))
     if args.command == "pair":
         shown_code = None
+        confirmed = False
         while True:
-            result = connection.connect(args.address, args.device_id)
+            result = connection.connect(args.address, args.device_id, confirm_pairing=confirmed)
             if result["status"] == "paired":
                 break
             if result["verification_code"] != shown_code:
                 shown_code = result["verification_code"]
                 print(f"Approve '{args.name}' on {result.get('name') or result['device_id']} ({result['device_id']}). Verification code: {shown_code}", file=sys.stderr, flush=True)
+            if result.get("confirmation_required"):
+                print("Compare ALL eight digits with the phone and approve there. Type yes only if they match: ", file=sys.stderr, end="", flush=True)
+                if sys.stdin.readline().strip().lower() != "yes":
+                    raise BridgeError("PAIRING_CONFIRMATION_REQUIRED", "Pairing not confirmed; no credential accepted", result["device_id"], action_executed=False)
+                confirmed = True
             args.device_id = result["device_id"]
             time.sleep(result["poll_interval"])
     elif args.command == "mcp-stdio":
@@ -732,6 +864,8 @@ def main():
         return
     elif args.command == "list-devices":
         result = connection.list_devices(not args.cached)
+    elif args.command == "forget-device":
+        result = connection.forget_device(args.device_id)
     elif args.command == "batch":
         calls = json.loads(Path(args.calls[1:]).read_text(encoding="utf-8-sig") if args.calls.startswith("@") else args.calls)
         result = connection.batch(calls, args.summary_only, args.continue_on_error)

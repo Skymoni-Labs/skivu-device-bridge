@@ -4,7 +4,7 @@
 
 Install the Skill with `skills add`, or run the MCP bridge with `npx`. Neither requires manually downloading a ZIP.
 
-Both integrations need Python 3.10+. For online installation, use Node.js 22.20+ with npm/npx and Git. The MCP launcher itself supports Node.js 18+. Start the service on the phone, enable accessibility for device operations, and make sure the client can reach the phone's IPv4 address. Initial pairing requires approval on the phone. Transport is plain HTTP over your network; there is no cloud relay.
+Both integrations need Python 3.10+. For online installation, use Node.js 22.20+ with npm/npx and Git. The MCP launcher itself supports Node.js 18+. Start the service on the phone, enable accessibility for device operations, and make sure the client can reach the phone's IPv4 address. Initial pairing requires approval on the phone. Transport is pinned HTTPS; compare all eight digits with the phone, approve there, and explicitly confirm the match to the AI before it passes `confirm_pairing:true`. There is no cloud relay.
 
 The GitHub commands below fetch `nidhoggfgg/PhoneUse` from its default branch, so the repository must be accessible. `@nidhoggfgg/phone-use` is the package's internal name, not a claim that it is published to the npm registry.
 
@@ -24,11 +24,11 @@ npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --globa
 
 The first `--yes` lets npx fetch the installer; the second skips installer prompts. Omit `--global` for project scope. Other clients can be selected interactively. Reload Skills, then ask:
 
-> Use $phone-use to connect to http://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
+> Use $phone-use to connect to https://192.168.1.20:8443. Show me the verification code, wait for my approval on the phone, then inspect the current screen.
 
 An installation request you can give an agent:
 
-> Install the phone-use Skill from https://github.com/nidhoggfgg/PhoneUse for this AI client, using npx skills add with project scope. Check Python 3.10+ and preserve existing Skills. Then connect to my phone at http://PHONE_IPV4:8443; I will approve pairing on the phone.
+> Install the phone-use Skill from https://github.com/nidhoggfgg/PhoneUse for this AI client, using npx skills add with project scope. Check Python 3.10+ and preserve existing Skills. Then connect to my phone at https://PHONE_IPV4:8443; I will approve pairing on the phone.
 
 Replace the example address. The agent should ask for it if unknown. Installing a Skill does not authorize access to a phone.
 
@@ -74,27 +74,27 @@ This generates platform-specific `mcpServers` JSON, including the Windows `cmd` 
 
 An installation request you can give an agent:
 
-> Install Phone Use MCP for this AI client as phone-use, using npx -y --package=github:nidhoggfgg/PhoneUse phone-use. Check Node.js, Git, and Python 3.10+. Prefer the host's MCP registration command; otherwise generate a snippet with print-config and merge it without removing other services. On Windows, launch npx through cmd /d /c. Connect to http://PHONE_IPV4:8443; I will approve pairing on the phone.
+> Install Phone Use MCP for this AI client as phone-use, using npx -y --package=github:nidhoggfgg/PhoneUse phone-use. Check Node.js, Git, and Python 3.10+. Prefer the host's MCP registration command; otherwise generate a snippet with print-config and merge it without removing other services. On Windows, launch npx through cmd /d /c. Connect to https://PHONE_IPV4:8443; I will approve pairing on the phone.
 
 ### First connection
 
 Reload the host's MCP configuration. Ask the agent to call:
 
 ```json
-{"address":"http://192.168.1.20:8443"}
+{"address":"https://192.168.1.20:8443"}
 ```
 
-with `phoneuse_connect`. Compare the verification code and approve on the phone. Then call `phoneuse_connect` again with `{"device_id":"RETURNED_DEVICE_ID"}` to finish claiming authorization. Every subsequent device call must explicitly include `device_id`.
+with `phoneuse_connect`. Compare all eight digits and approve on the phone, then explicitly tell the AI the codes match. Only then call `phoneuse_connect` with `{"device_id":"RETURNED_DEVICE_ID","confirm_pairing":true}` to finish claiming authorization. Every subsequent device call must explicitly include `device_id`.
 
-Optional startup arguments are `--url http://PHONE_IPV4:8443`, `--name "My AI"`, and `--config /absolute/path/registry.json`. Pass them as separate host arguments; Windows `cmd` requires its own quoting rules. Ordinary setup can omit them and supply the address through `phoneuse_connect`.
+Optional startup arguments are `--url https://PHONE_IPV4:8443`, `--name "My AI"`, and `--config /absolute/path/registry.json`. Pass them as separate host arguments; Windows `cmd` requires its own quoting rules. Ordinary setup can omit them and supply the address through `phoneuse_connect`.
 
 The bridge supports MCP `2025-03-26`, `2025-06-18`, and `2025-11-25`, and returns screenshots as native image blocks. It can initialize while the phone is offline. After pairing, `notifications/tools/list_changed` announces device tools. If the host does not refresh, use `phoneuse_call` with `device_id`, `tool`, and `arguments`. Long batches may need a longer host timeout or smaller batches. The 2026 protocol is not implemented.
 
 ### Local checkout or direct HTTP
 
-A checkout can run `python /absolute/path/tools/phoneuse_client.py mcp-stdio --url http://PHONE_IPV4:8443 --name "My AI"` as the host's stdio command.
+A checkout can run `python /absolute/path/tools/phoneuse_client.py mcp-stdio --url https://PHONE_IPV4:8443 --name "My AI"` as the host's stdio command.
 
-For programs that manage their own Bearer credentials, the phone also exposes `http://PHONE_IPV4:8443/mcp`. It supports Streamable HTTP POST/JSON without SSE. See the API reference in the repository for native pairing and transport details.
+For programs that manage their own Bearer credentials, the phone also exposes `https://PHONE_IPV4:8443/mcp`. It supports Streamable HTTP POST/JSON without SSE. See the API reference in the repository for native pairing and transport details.
 
 ## Updates and credentials
 

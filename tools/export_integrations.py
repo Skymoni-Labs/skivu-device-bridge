@@ -23,6 +23,8 @@ PACKAGES = {
         "scripts/phoneuse_client.py": "skills/phone-use/scripts/phoneuse_client.py",
         "references/api.md": "skills/phone-use/references/api.md",
         "references/api.zh-CN.md": "skills/phone-use/references/api.zh-CN.md",
+        "references/transport-security.md": "skills/phone-use/references/transport-security.md",
+        "references/transport-security.zh-CN.md": "skills/phone-use/references/transport-security.zh-CN.md",
     },
 }
 

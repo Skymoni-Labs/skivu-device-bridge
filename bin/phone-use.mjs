@@ -61,7 +61,7 @@ export function bridgeArgs(args) {
 
 export function main(args = process.argv.slice(2)) {
   if (args[0] === '--help' || args[0] === '-h') {
-    process.stdout.write(`Phone Use MCP\n\nUsage: phone-use [--url http://PHONE:8443] [--name NAME] [--config PATH]\n       phone-use print-config [--host json|codex]\n\nRequires Python 3.10+. PHONEUSE_PYTHON can select its executable.\nPair using phoneuse_connect in your AI client; approve on the phone.\n`);
+    process.stdout.write(`Phone Use MCP\n\nUsage: phone-use [--url https://PHONE:8443] [--name NAME] [--config PATH]\n       phone-use print-config [--host json|codex]\n\nRequires Python 3.10+. PHONEUSE_PYTHON can select its executable.\nPair using phoneuse_connect in your AI client; approve on the phone.\n`);
     return;
   }
   if (args[0] === 'print-config') {

@@ -18,16 +18,16 @@ python configure.py --host codex --output phoneuse-codex.toml
 
 将生成的 `[mcp_servers.phone-use]` 段合并到 `~/.codex/config.toml`；已存在同名段时替换该段，不要重复追加。生成器记录当前 Python 和桥接脚本的绝对路径，移动文件或更换电脑后重新生成。`--output` 拒绝覆盖已有文件；省略时输出到终端，不会自动修改 AI 设置。
 
-可选参数 `--url http://192.168.1.20:8443` 提供初始手机地址，`--name "My AI"` 设置配对名称，`--config /absolute/path/registry.json` 隔离凭证存储。不传地址时，由 AI 在 phoneuse_connect 中提供。
+可选参数 `--url https://192.168.1.20:8443` 提供初始手机地址，`--name "My AI"` 设置配对名称，`--config /absolute/path/registry.json` 隔离凭证存储。不传地址时，由 AI 在 phoneuse_connect 中提供。
 
 手机启动 Phone Use 服务并开启无障碍，AI 客户端重新加载 MCP 后，让 AI：
 
-> 用 Phone Use 连接 http://我的手机IPv4:8443，显示配对核对码，等我在手机批准后观察当前界面。
+> 用 Phone Use 连接 https://我的手机IPv4:8443，显示配对核对码，等我在手机批准后观察当前界面。
 
-AI 调用 `phoneuse_connect({"address":"http://手机IPv4:8443"})`，首次会返回核对码。手机批准后，AI 再调用 `phoneuse_connect({"device_id":"返回的设备ID"})`。之后每次设备操作必须带 `device_id`。手机离线也能初始化 MCP；重连不需要删除配对。
+AI 调用 `phoneuse_connect({"address":"https://手机IPv4:8443"})`，首次会返回核对码。用户明确确认短码一致并在手机批准后，AI 再调用 `phoneuse_connect({"device_id":"返回的设备ID","confirm_pairing":true})`。之后每次设备操作必须带 `device_id`。手机离线也能初始化 MCP；重连不需要删除配对。
 
 支持 MCP 2025-03-26、2025-06-18、2025-11-25，stdio 逐行 JSON。桥接动态发现手机工具并返回截图图片块；宿主未刷新工具列表时可用 phoneuse_call。长观察可达 90 秒，宿主工具超时建议至少 120 秒，长批量需更大预算或拆分调用。
 
-客户端机器必须能访问手机 IPv4，当前使用明文 HTTP，仅在可信网络使用。云端 AI 若不能运行本地程序或访问局域网，不能直接使用此包。凭证自动保存到用户目录 `.phoneuse.json`，不要分发该文件。无需安装 Android SDK、ADB 或 Python 依赖。
+客户端机器必须能访问手机 IPv4，使用绑定公钥的 HTTPS；首次逐位核对八位码并在手机批准，然后明确告诉 AI 核对一致，它才能携带 `confirm_pairing:true` 继续。云端 AI 若不能运行本地程序或访问局域网，不能直接使用此包。凭证自动保存到用户目录 `.phoneuse.json`，不要分发该文件。无需安装 Android SDK、ADB 或 Python 依赖。
 
 配置格式参考：[MCP 本地服务接入](https://modelcontextprotocol.io/docs/develop/connect-local-servers)、[Codex MCP](https://developers.openai.com/codex/mcp)。

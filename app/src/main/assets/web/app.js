@@ -1,7 +1,7 @@
 'use strict';
 const { t } = PhoneUseI18n;
 const $ = id => document.getElementById(id);
-// randomUUID requires a secure context; LAN HTTP still supports getRandomValues.
+// Use Web Crypto randomness for request IDs.
 function newRequestId() {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   bytes[6] = (bytes[6] & 15) | 64;

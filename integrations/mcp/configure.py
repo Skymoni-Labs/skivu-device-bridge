@@ -9,11 +9,11 @@ from urllib.parse import urlsplit
 
 
 def phone_address(value):
-    value = value if "://" in value else "http://" + value
+    value = value if "://" in value else "https://" + value
     url = urlsplit(value)
-    if (url.scheme != "http" or not url.hostname or url.username is not None
+    if (url.scheme != "https" or not url.hostname or url.username is not None
             or url.password is not None or url.path not in ("", "/") or url.query or url.fragment):
-        raise argparse.ArgumentTypeError("Use http://PHONE_IPV4:PORT without credentials or a path")
+        raise argparse.ArgumentTypeError("Use https://PHONE_IPV4:PORT without credentials or a path")
     try:
         ipaddress.IPv4Address(url.hostname)
         port = url.port if url.port is not None else 8443
@@ -21,7 +21,7 @@ def phone_address(value):
             raise ValueError("Invalid port")
     except ValueError as error:
         raise argparse.ArgumentTypeError("Phone Use requires an IPv4 address and a valid port") from error
-    return f"http://{url.hostname}:{port}"
+    return f"https://{url.hostname}:{port}"
 
 
 def configuration(host, client, python, address=None, name="Phone Use AI", config=None):

@@ -4,7 +4,7 @@
 
 ## Web 控制台
 
-打开手机显示的地址，例如 `http://192.168.1.20:8443/`。请求配对、核对两端核对码并在手机批准。控制台支持搜索 API、填写参数表单或编辑 JSON、查看响应。截图仅在显式请求观察后展示。
+浏览器直连地址为 `https://192.168.1.20:8443/`，需要独立建立浏览器证书信任；浏览器六位授权码不能替代 TLS 身份验证。无需安装证书的配对请使用下面的 MCP／Python 客户端。控制台仍支持 API 搜索、参数表单、JSON 编辑及显式截图。
 
 浏览器用 HttpOnly Cookie 保存授权。关闭标签页、重启浏览器或 App 通常无需重新配对。可在手机撤销客户端，或在网页解除当前浏览器配对。清除 Cookie 或更换浏览器访问地址后需重新配对。网页不展示或导出长期 token。
 
@@ -15,13 +15,13 @@
 需要 Python 3.10+，无第三方依赖。在仓库根目录运行：
 
 ```sh
-python tools/phoneuse_client.py pair --url http://192.168.1.20:8443 --name laptop
+python tools/phoneuse_client.py pair --url https://192.168.1.20:8443 --name laptop
 python tools/phoneuse_client.py list-devices
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-out screenshot.jpg
 python tools/phoneuse_client.py call observe --device-id DEVICE_ID --full-tree
 ```
 
-`pair` 显示核对码并等待手机批准。已完成配对会直接复用，未完成请求也会保存，方便客户端重启后继续领取。未完成请求两分钟过期，手机服务重启会清除它们。
+`pair` 显示本地计算的八位码。逐位核对手机上的码，在手机批准，然后在 CLI 输入 `yes`。使用 MCP 时，告诉 AI 已核对一致，AI 才能携带 `confirm_pairing:true` 继续调用 `phoneuse_connect`。已完成配对自动复用；未完成请求两分钟过期，手机服务重启后清除。
 
 默认配置为 `~/.phoneuse.json`。需要自定义位置时，在**子命令之前**添加 `--config /absolute/path/registry.json`。即使只有一台设备，也要传入返回的 `DEVICE_ID`。地址变化时用 `pair --url NEW_URL --device-id DEVICE_ID` 更新。桥接发送凭证前核验安装身份；旧配置没有可信设备 ID 时需要重新批准。
 
@@ -56,7 +56,7 @@ App 记住服务启用及暂停状态。重开 App 会恢复此前启用的服�
 
 ## 连接排查
 
-服务使用 **8443 端口的明文 HTTP**，不加密传输凭证、截图和动作，不提供云端中继。客户端须能访问手机 IPv4；当前 Host/Origin 策略不支持域名和反向代理。
+服务使用 **8443 端口的 HTTPS**，并绑定安装级公钥。不回退 HTTP，不提供云端中继。客户端须能访问手机 IPv4；当前 Host/Origin 策略不支持域名和反向代理。详见[传输安全](transport-security.zh-CN.md)。
 
 开发时可选用 ADB 本机转发：
 
@@ -64,9 +64,9 @@ App 记住服务启用及暂停状态。重开 App 会恢复此前启用的服�
 adb forward tcp:8443 tcp:8443
 ```
 
-随后打开 `http://127.0.0.1:8443/`。Windows PowerShell 使用 `curl.exe http://127.0.0.1:8443/`，避免 `curl` 别名。正常网络连接不需要 ADB。
+随后使用 `python tools/phoneuse_client.py pair --url https://127.0.0.1:8443` 连接。正常网络连接不需要 ADB。
 
-从旧 HTTPS 配置升级时，将 `https://` 改为 `http://`，删除不再使用的 `fingerprint`。满足身份要求时原生客户端可继续使用旧凭证；浏览器将协议变化视为新来源，需要重新配对，无需卸载 App。
+同时更新手机和桥接。已有 HTTP 地址会在本地迁移为 HTTPS，但旧凭证会丢弃，必须重新核对配对。TLS 密钥变化不会自动接受；若独立核实确实进行了重装／重置，先在手机撤销旧客户端，再执行 `python tools/phoneuse_client.py forget-device --device-id DEVICE_ID`，然后重新配对。
 
 无法输入时检查无障碍、锁屏、暂停和客户端授权。云端 AI 如果不能访问局域网或运行本地桥接，仅安装接入文件无法连接手机。
 
