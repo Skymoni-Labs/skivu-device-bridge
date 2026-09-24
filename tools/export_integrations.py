@@ -6,6 +6,8 @@ from pathlib import Path
 import sys
 from zipfile import ZipFile, ZIP_DEFLATED
 
+import sync_skill
+
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGES = {
     "phoneuse-mcp": {
@@ -30,6 +32,7 @@ PACKAGES = {
 
 
 def export(destination):
+    sync_skill.require_skill()
     destination = destination.expanduser().resolve()
     # Read first, so missing sources cannot produce a partially assembled package.
     contents = {name: {target: (ROOT / source).read_bytes() for target, source in files.items()}

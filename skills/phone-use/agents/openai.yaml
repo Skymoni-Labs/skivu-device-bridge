@@ -1,4 +1,0 @@
-interface:
-  display_name: "Phone Use"
-  short_description: "Observe and control Android phones with Phone Use"
-  default_prompt: "Use $phone-use to connect to my phone, observe its screen, and perform the task I specify."

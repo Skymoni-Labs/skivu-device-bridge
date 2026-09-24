@@ -6,12 +6,12 @@ Install the Skill with `skills add`, or run the MCP bridge with `npx`. Neither r
 
 Both integrations need Python 3.10+. For online installation, use Node.js 22.20+ with npm/npx and Git. The MCP launcher itself supports Node.js 18+. Start the service on the phone, enable accessibility for device operations, and make sure the client can reach the phone's IPv4 address. Initial pairing requires approval on the phone. Transport is pinned HTTPS; compare all eight digits with the phone, approve there, and explicitly confirm the match to the AI before it passes `confirm_pairing:true`. There is no cloud relay.
 
-The GitHub commands below fetch `nidhoggfgg/PhoneUse` from its default branch, so the repository must be accessible. `@nidhoggfgg/phone-use` is the package's internal name, not a claim that it is published to the npm registry.
+The Skill commands fetch the standalone `nidhoggfgg/phone-use-skills` repository; MCP commands fetch `nidhoggfgg/PhoneUse`. Both use the default branch, and the corresponding repository must be accessible. `@nidhoggfgg/phone-use` is the package's internal name, not a claim that it is published to the npm registry.
 
 ## Option 1: Agent Skill
 
 ```sh
-npx skills add nidhoggfgg/PhoneUse --skill phone-use
+npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
 Choose your AI client and project or global scope. The installation includes instructions, the Python client, and API references. No Android build or separate MCP installation is needed on the client machine.
@@ -19,7 +19,7 @@ Choose your AI client and project or global scope. The installation includes ins
 For a global Codex installation:
 
 ```sh
-npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --global --yes
+npx --yes skills add nidhoggfgg/phone-use-skills --skill phone-use --agent codex --global --yes
 ```
 
 The first `--yes` lets npx fetch the installer; the second skips installer prompts. Omit `--global` for project scope. Other clients can be selected interactively. Reload Skills, then ask:
@@ -28,7 +28,7 @@ The first `--yes` lets npx fetch the installer; the second skips installer promp
 
 An installation request you can give an agent:
 
-> Install the phone-use Skill from https://github.com/nidhoggfgg/PhoneUse for this AI client, using npx skills add with project scope. Check Python 3.10+ and preserve existing Skills. Then connect to my phone at https://PHONE_IPV4:8443; I will approve pairing on the phone.
+> Install the phone-use Skill from https://github.com/nidhoggfgg/phone-use-skills for this AI client, using npx skills add with project scope. Check Python 3.10+ and preserve existing Skills. Then connect to my phone at https://PHONE_IPV4:8443; I will approve pairing on the phone.
 
 Replace the example address. The agent should ask for it if unknown. Installing a Skill does not authorize access to a phone.
 
@@ -106,7 +106,13 @@ A cloud host without local execution or a route to your phone cannot use this br
 
 ## Maintenance and offline packages
 
-`skills/phone-use/` is self-contained. The canonical client and API documents live at `tools/phoneuse_client.py`, `docs/api.md`, and `docs/api.zh-CN.md`. After changing them:
+`skills/` is a Git submodule pointing to [phone-use-skills](https://github.com/nidhoggfgg/phone-use-skills); `skills/phone-use/` is self-contained. Initialize it after cloning or pulling the main repository:
+
+```sh
+git submodule update --init --recursive
+```
+
+For a fresh clone, use `git clone --recurse-submodules https://github.com/nidhoggfgg/PhoneUse.git`. After initialization, run `git -C skills switch main` before editing the Skill. The canonical client and API documents live at `tools/phoneuse_client.py`, `docs/api.md`, and `docs/api.zh-CN.md`. After changing them:
 
 ```sh
 python tools/sync_skill.py
@@ -116,7 +122,16 @@ npm test
 npm pack --dry-run
 ```
 
-Commit synchronized files together; CI checks for stale copies. npm uses an explicit file list and has no install-time build script. It excludes the Android project, credentials, and screenshots.
+Commit and push the synchronized files in the skills repository first, then commit the updated `skills` pointer together with the source changes in the main repository:
+
+```sh
+git -C skills add phone-use
+git -C skills commit -m "Update phone-use Skill"
+git -C skills push origin main
+git add skills
+```
+
+Stage the corresponding source changes before committing the main repository. CI checks out the pinned submodule commit and checks for stale copies. The submodule uses HTTPS for public clones; maintainers can configure SSH pushes with `git -C skills remote set-url --push origin git@github.com:nidhoggfgg/phone-use-skills.git`. npm uses an explicit file list and has no install-time build script. It excludes the Android project, credentials, and screenshots.
 
 `python tools/export_integrations.py` creates `dist/integrations/phoneuse-mcp.zip`, `phone-use.zip`, bilingual installation guides, and checksums. Offline MCP uses `python configure.py --host json` or `--host codex` to generate absolute paths; regenerate after moving the directory.
 

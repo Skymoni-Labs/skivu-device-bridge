@@ -55,7 +55,7 @@ App 支持英文、简体中文和跟随系统；Web 控制台跟随浏览器语
 ### Agent Skill
 
 ```sh
-npx skills add nidhoggfgg/PhoneUse --skill phone-use
+npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
 按提示选择 AI 客户端和安装范围，然后告诉 AI：

@@ -55,7 +55,7 @@ For installation through GitHub, use **Node.js 22.20+**, **Git**, and **Python 3
 ### Agent Skill
 
 ```sh
-npx skills add nidhoggfgg/PhoneUse --skill phone-use
+npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
 Select your AI client and installation scope. Then ask it:

@@ -14,7 +14,15 @@ COPIES = {
 }
 
 
+def require_skill():
+    if not (ROOT / "skills/phone-use/SKILL.md").is_file():
+        raise SystemExit(
+            "Skill submodule is missing; run git submodule update --init --recursive"
+        )
+
+
 def sync(check=False):
+    require_skill()
     stale = []
     for source, target in COPIES.items():
         # Normalize line endings so Git's Windows checkout conversion is harmless.

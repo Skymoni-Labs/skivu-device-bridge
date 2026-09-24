@@ -7,6 +7,7 @@
 Use JDK 25 and Android SDK 37 with the checked-in Gradle wrapper. Configure the SDK locally; do not commit machine paths.
 
 ```sh
+git submodule update --init --recursive
 ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 python -m py_compile tools/phoneuse_client.py
 python tools/sync_skill.py --check

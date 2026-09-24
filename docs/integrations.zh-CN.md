@@ -6,20 +6,20 @@
 
 两者都需要本机 Python 3.10+，在线安装请使用 Node.js 22.20+（含 npm/npx，满足当前 Skills CLI 要求；MCP 启动器本身支持 Node.js 18+）；从 GitHub 获取包还需要 Git。手机启动 Phone Use 并开启无障碍，电脑能访问手机 IPv4，首次连接由用户在手机批准。截图和控制使用绑定公钥的 HTTPS。首次逐位核对八位码，在手机批准，并明确告诉 AI 核对一致后，它才能携带 `confirm_pairing:true` 继续。不提供云端中继。
 
-下列 GitHub 命令读取 `nidhoggfgg/PhoneUse` 的默认分支，仓库必须对使用者可访问。当前方案无需注册 npm 包；`@nidhoggfgg/phone-use` 是包内名称，不代表已发布到 npm registry。
+Skill 命令从独立的 `nidhoggfgg/phone-use-skills` 仓库获取文件，MCP 命令仍使用 `nidhoggfgg/PhoneUse`。两者均读取默认分支，对应仓库必须对使用者可访问。当前方案无需注册 npm 包；`@nidhoggfgg/phone-use` 是包内名称，不代表已发布到 npm registry。
 
 ## 方式一：安装 Skill
 
 ```sh
-npx skills add nidhoggfgg/PhoneUse --skill phone-use
+npx skills add nidhoggfgg/phone-use-skills --skill phone-use
 ```
 
-按提示选择 AI 客户端和项目/全局安装范围。安装器会一起安装 SKILL.md、Python 脚本与接口参考，无需克隆项目、运行构建或额外安装 MCP。
+按提示选择 AI 客户端和项目/全局安装范围。安装器会一起安装 SKILL.md、Python 脚本与接口参考，只需下载独立的 Skills 仓库，无需获取 Android 主仓库、运行构建或额外安装 MCP。
 
 让 AI 代为安装时，可明确客户端和范围。例如为 Codex 全局安装：
 
 ```sh
-npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --global --yes
+npx --yes skills add nidhoggfgg/phone-use-skills --skill phone-use --agent codex --global --yes
 ```
 
 第一个 `--yes` 允许 npx 获取安装器，第二个跳过安装器的交互选择。仅当前项目使用时去掉 `--global`；其他宿主可在交互流程选择。重新加载 Skill 后说：
@@ -28,7 +28,7 @@ npx --yes skills add nidhoggfgg/PhoneUse --skill phone-use --agent codex --globa
 
 可直接交给 AI 的安装指令：
 
-> 请将 https://github.com/nidhoggfgg/PhoneUse 的 phone-use Skill 安装到当前 AI 客户端，使用 npx skills add，安装范围为当前项目。检查 Python 3.10+ 是否可用，保留其他已安装的 Skill。安装后连接我的手机 https://手机IPv4:8443，首次配对由我在手机批准。
+> 请将 https://github.com/nidhoggfgg/phone-use-skills 的 phone-use Skill 安装到当前 AI 客户端，使用 npx skills add，安装范围为当前项目。检查 Python 3.10+ 是否可用，保留其他已安装的 Skill。安装后连接我的手机 https://手机IPv4:8443，首次配对由我在手机批准。
 
 手机地址必须换成真实值；未提供时由 AI 询问。Skill 安装并不自动授权手机。
 
@@ -102,7 +102,13 @@ Skill 可重新运行安装命令更新。MCP 的 GitHub 默认分支安装可�
 
 ## 维护与离线包
 
-`skills/phone-use/` 是完整可安装目录，所有依赖文件均在其内部。客户端和接口协议以 `tools/phoneuse_client.py`、`docs/api.md`、`docs/api.zh-CN.md` 为源；修改后运行：
+`skills/` 是指向 [phone-use-skills](https://github.com/nidhoggfgg/phone-use-skills) 的 Git 子模块；`skills/phone-use/` 是完整可安装目录，所有依赖文件均在其内部。克隆或拉取主仓库后先初始化子模块：
+
+```sh
+git submodule update --init --recursive
+```
+
+首次克隆可使用 `git clone --recurse-submodules https://github.com/nidhoggfgg/PhoneUse.git`。初始化后，编辑 Skill 前运行 `git -C skills switch main`。客户端和接口协议以 `tools/phoneuse_client.py`、`docs/api.md`、`docs/api.zh-CN.md` 为源；修改后运行：
 
 ```sh
 python tools/sync_skill.py
@@ -112,7 +118,16 @@ npm test
 npm pack --dry-run
 ```
 
-同步后的文件应一并提交，CI 会检查是否遗漏。npm 使用显式 files 列表，不打包 Android 工程、凭证或截图，也没有安装时构建脚本。
+先在 skills 仓库提交并推送同步后的文件，再将更新后的 `skills` 指针与源文件修改一并提交到主仓库：
+
+```sh
+git -C skills add phone-use
+git -C skills commit -m "Update phone-use Skill"
+git -C skills push origin main
+git add skills
+```
+
+提交主仓库前还需暂存对应的源文件修改。CI 检出主仓库锁定的子模块提交，并检查同步副本是否过期。子模块使用 HTTPS 方便公开克隆；维护者可运行 `git -C skills remote set-url --push origin git@github.com:nidhoggfgg/phone-use-skills.git` 配置 SSH 推送。npm 使用显式 files 列表，不打包 Android 工程、凭证或截图，也没有安装时构建脚本。
 
 仍支持 `python tools/export_integrations.py` 生成 `dist/integrations/phoneuse-mcp.zip`、`phone-use.zip`、中英文说明及校验和，供离线分发。离线 MCP 包使用 `python configure.py --host json` 或 `--host codex` 生成绝对路径配置，移动目录后重新生成。
 

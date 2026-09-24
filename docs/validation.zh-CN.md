@@ -7,6 +7,7 @@
 使用 JDK 25、Android SDK 37 和仓库内的 Gradle wrapper。SDK 路径在本机配置，不提交机器路径。
 
 ```sh
+git submodule update --init --recursive
 ./gradlew :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 python -m py_compile tools/phoneuse_client.py
 python tools/sync_skill.py --check
