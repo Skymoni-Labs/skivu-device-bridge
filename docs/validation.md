@@ -45,10 +45,6 @@ The Gradle task installs the debug-only fixture first. Test reports are written 
 | Web tests | Pairing UI, recovery, API forms, request IDs, responsive layout | Simulated HTTP responses |
 | Android instrumentation | Production service, accessibility, fixture controls, UI language and persistence | Emulator coverage does not establish vendor compatibility |
 
-The latest archived Android run (2026-09-17) records 78 JVM tests and 27 device tests passing on a Pixel 8 / Android 17 emulator, with no Lint errors. These are historical results, not a new run or a compatibility guarantee. Earlier records describe behavior later changed by the implementation.
-
-The [original September 2026 validation log (Chinese)](history/validation-2026-09.zh-CN.md) is retained for provenance. Its local reports are generated artifacts, not bundled evidence. Current behavior is defined in the [API reference](api.md).
-
 ## Physical-device acceptance checklist
 
 Record device model, Android version, app revision, latency, error codes, and recovery steps. Android 11–12 language persistence, Android 14+, Android 17+ permissions, and vendor background restrictions still need matching-device verification.

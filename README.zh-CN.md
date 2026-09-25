@@ -102,8 +102,9 @@ python tools/phoneuse_client.py call observe --device-id DEVICE_ID --screenshot-
 | [API 参考](docs/api.zh-CN.md) | 工具、参数、观察语义、错误及请求保留规则 |
 | [开发与验证](docs/validation.zh-CN.md) | 构建检查、模拟器测试页、实机验收 |
 | [贡献指南](CONTRIBUTING.zh-CN.md) | 提交修改、报告问题、文档约定 |
+| [安全策略](SECURITY.md) | 支持版本及私密漏洞报告方式 |
 
-当前指南顶部均提供 English / 简体中文切换。
+上述指南均提供英文和简体中文内容。
 
 ## 许可证
 

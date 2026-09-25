@@ -102,8 +102,9 @@ An `executed` result means Android accepted the action or completed the gesture�
 | [API reference](docs/api.md) | Tools, parameters, observation semantics, errors, request retention |
 | [Development and validation](docs/validation.md) | Build checks, emulator fixtures, physical-device acceptance |
 | [Contributing](CONTRIBUTING.md) | Changes, bug reports, documentation conventions |
+| [Security policy](SECURITY.md) | Supported versions and private vulnerability reporting |
 
-Each current guide has an English / 简体中文 switch at the top.
+The guides above are available in English and Simplified Chinese.
 
 ## License
 
