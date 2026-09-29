@@ -122,8 +122,9 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             val token = if (auth != null) auth.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ") else cookieToken
             val client = if (isPairing) null else token?.let(identities::authenticate)
             if (path == "/browser/session" && request[0] == "GET") {
-                write(socket, Response(200, json("paired" to (client != null), "client_id" to client),
-                    cookie = cookie(if (client != null) token!! else "", socket.localPort)))
+                // A delayed check (including another tab's) must not overwrite a newer pairing cookie.
+                // Only approval, explicit migration and unpairing change browser credentials.
+                write(socket, Response(200, json("paired" to (client != null), "client_id" to client)))
                 return
             }
             if (!isPairing && client == null) throw HttpError(401, "Invalid or missing client authorization")

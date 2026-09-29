@@ -175,6 +175,13 @@ class HttpServerInstrumentedTest {
             assertTrue(cookieHeader.contains("Max-Age=34560000"))
             val cookie = cookieHeader.substringBefore(';')
             assertTrue(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
+            assertFalse(responseHeaders.contains("Set-Cookie:", ignoreCase = true))
+            // An older tab can check before receiving the approval cookie. Its response must
+            // never clear credentials that another request has just installed in the browser.
+            assertFalse(JSONObject(request("/browser/session").second).getBoolean("paired"))
+            assertFalse(responseHeaders.contains("Set-Cookie:", ignoreCase = true))
+            assertFalse(JSONObject(request("/browser/session", cookie = "phoneuse_client_18443=invalid").second).getBoolean("paired"))
+            assertFalse(responseHeaders.contains("Set-Cookie:", ignoreCase = true))
             assertEquals(200, request("/api/tools", cookie = cookie).first)
             assertEquals(403, request("/api", json("tool" to "get_status"), site = "cross-site", cookie = cookie).first)
             // Recreate every service-owned object; completed pairing must outlive them all.
@@ -193,12 +200,13 @@ class HttpServerInstrumentedTest {
             assertEquals(200, request("/api/tools", token = token).first)
             // Existing Bearer tabs can migrate to a persistent cookie without a new request.
             assertTrue(JSONObject(request("/browser/session", JSONObject(), token).second).getBoolean("paired"))
-            assertFalse(responseHeaders.isBlank())
+            assertTrue(responseHeaders.contains("Set-Cookie: $cookie;"))
             assertEquals(200, request("/browser/forget", JSONObject(), cookie = cookie).first)
             assertTrue(responseHeaders.contains("Max-Age=0"))
             assertEquals(401, request("/api/tools", cookie = cookie).first)
             assertEquals(401, request("/api/tools", token = token).first)
             assertFalse(JSONObject(request("/browser/session", cookie = cookie).second).getBoolean("paired"))
+            assertFalse(responseHeaders.contains("Set-Cookie:", ignoreCase = true))
             assertFalse(IdentityStore(context).exists(clientId))
         } finally {
             clientId?.let { identity.revoke(it) }

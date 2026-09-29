@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const root = path.join(__dirname, '../app/src/main/assets/web');
 let failNextAction = false;
 let nextResult = null;
-let pairingState = 'pending', revoked = false, calls = [], polls = 0, pairRequests = 0, offline = false;
+let pairingState = 'pending', revoked = false, calls = [], polls = 0, pairRequests = 0, sessionRequests = 0, offline = false;
 const tool = (name, required = [], properties = {}) => ({ name, description: name, inputSchema: { type: 'object', required, properties } });
 const catalog = [tool('get_capabilities'), tool('get_status', [], { request_id: { type: 'string' } }), tool('launch_app', ['request_id', 'package_name'], { request_id: { type: 'string' }, package_name: { type: 'string', description: 'Android package name' }, observe_after: { type: 'boolean' }, observation_options: { type: 'object' } }), tool('home', ['request_id'], {
   request_id: { type: 'string' }
@@ -28,6 +28,7 @@ const server = http.createServer(async (req, res) => {
   const authorized = !revoked && (req.headers.cookie || '').includes(`${cookieName}=test-token`);
   if (offline) { res.statusCode = 503; return reply({ error: 'Service restarting' }); }
   if (req.url === '/browser/session') {
+    sessionRequests++;
     if (req.method === 'POST' && req.headers.authorization === 'Bearer legacy-token') {
       cookie('test-token'); return reply({ paired: true, client_id: 'test-client' });
     }
@@ -77,11 +78,35 @@ const server = http.createServer(async (req, res) => {
     assert.equal(await page.locator('#run').isDisabled(), true);
     await page.reload(); // Pending request is restored, not recreated.
     await page.waitForFunction(() => document.getElementById('verification').textContent === '123456');
+    // Returning from the phone app (or coming online) must not start a session check
+    // while approval is being polled, even if that check would return after approval.
+    const sessionsBeforeApproval = sessionRequests;
+    let releaseSessionChecks;
+    const sessionGate = new Promise(resolve => { releaseSessionChecks = resolve; });
+    let concurrentSessionChecks = 0;
+    await page.route('**/browser/session', async route => {
+      concurrentSessionChecks++;
+      await sessionGate;
+      await route.fulfill({ json: { paired: false, client_id: null } });
+    });
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event('focus'));
+      window.dispatchEvent(new Event('online'));
+    });
     pairingState = 'approved';
+    await page.waitForFunction(() => document.getElementById('connection').textContent === '已配对');
+    releaseSessionChecks();
+    await page.unrouteAll({ behavior: 'wait' });
+    assert.equal(concurrentSessionChecks, 0, 'session checks must wait for pairing to finish');
+    assert.equal(sessionRequests, sessionsBeforeApproval);
     await page.waitForFunction(() => !document.getElementById('run').disabled);
     assert.equal(calls.length, 0); // Pairing only loads the catalog; no automatic tool calls.
     await page.reload();
     await page.waitForFunction(() => !document.getElementById('run').disabled);
+    const sessionsAfterReload = sessionRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.waitForFunction(() => !document.getElementById('run').disabled);
+    assert.equal(sessionRequests, sessionsAfterReload + 1, 'session checks resume after pairing');
     assert.equal(await page.evaluate(() => document.cookie), '');
     assert.equal(await page.evaluate(() => sessionStorage.getItem('phoneuse.credential')), null);
     assert.equal((await context.cookies())[0].httpOnly, true);
