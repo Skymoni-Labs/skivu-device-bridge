@@ -3,6 +3,8 @@ package ai.nidhoggfgg.phoneuse.ui
 import android.os.SystemClock
 import ai.nidhoggfgg.phoneuse.PhoneUseService
 import ai.nidhoggfgg.phoneuse.R
+import ai.nidhoggfgg.phoneuse.server.ConnectionAddresses
+import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -10,31 +12,37 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import java.net.Inet4Address
 import java.net.NetworkInterface
 
 @Composable
 internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
+    val context = LocalContext.current
+    val settings = remember(context) { ConnectionSettings(context) }
     val addresses = remember(tick / 10) {
         runCatching {
             NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
-                .flatMap { it.inetAddresses.toList() }.filterIsInstance<Inet4Address>()
-                .filter { !it.isLoopbackAddress }.mapNotNull { it.hostAddress }.distinct()
+                .flatMap { it.inetAddresses.toList() }
+                .filter { !it.isLoopbackAddress && !it.isAnyLocalAddress && !it.isLinkLocalAddress && !it.isMulticastAddress }
+                .mapNotNull { it.hostAddress }.distinct()
         }.getOrDefault(emptyList())
     }
+    val urls = ConnectionAddresses.urls(addresses, settings.publicHost, settings.allowInsecureHttp)
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
     SectionCard {
         Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleMedium)
         Text(stringResource(R.string.connection_help), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
-        if (addresses.isEmpty()) {
+        if (urls.isEmpty()) {
             Text(stringResource(R.string.no_network_address), style = MaterialTheme.typography.bodyMedium)
         } else SelectionContainer {
-            Text(addresses.joinToString("\n") { "https://$it:8443" }, style = MaterialTheme.typography.bodyLarge)
+            Text(urls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
         }
+        if (settings.publicHost.isNotEmpty()) Text(stringResource(R.string.public_address_help),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onOpenWebConsole) { Text(stringResource(R.string.open_web_console)) }
             TextButton(onClick = { detailsOpen = !detailsOpen }) {
@@ -43,7 +51,7 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         }
         if (detailsOpen) {
             HorizontalDivider()
-            SelectionContainer { Text("https://127.0.0.1:8443\nAPI: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
+            SelectionContainer { Text("API: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.pairing_persistence_help), style = MaterialTheme.typography.bodySmall)
         }
     }

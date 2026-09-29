@@ -23,7 +23,7 @@ const server = http.createServer(async (req, res) => {
   let body = ''; for await (const chunk of req) body += chunk;
   const payload = body ? JSON.parse(body) : {};
   const reply = value => res.end(JSON.stringify(value));
-  const cookieName = `phoneuse_client_${server.address().port}`;
+  const cookieName = `phoneuse_http_client_${server.address().port}`;
   const cookie = token => res.setHeader('Set-Cookie', `${cookieName}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${token ? 34560000 : 0}`);
   const authorized = !revoked && (req.headers.cookie || '').includes(`${cookieName}=test-token`);
   if (offline) { res.statusCode = 503; return reply({ error: 'Service restarting' }); }

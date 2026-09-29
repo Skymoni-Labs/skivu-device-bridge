@@ -107,13 +107,13 @@ class HttpServerInstrumentedTest {
         var clientId: String? = null
         try {
             server.start(18443)
-            // A plaintext request cannot obtain a page or trigger pairing on the TLS listener.
+            // Loopback HTTP shares the listener with TLS and still requires authorization.
             Socket("127.0.0.1", 18443).use { plain ->
                 plain.soTimeout = 2000
                 plain.outputStream.write("GET /identity HTTP/1.1\r\nHost: 127.0.0.1:18443\r\n\r\n".toByteArray())
                 val response = runCatching { plain.inputStream.readBytes().toString(Charsets.UTF_8) }.getOrDefault("")
-                assertFalse(response.contains("200 OK"))
-                assertFalse(response.contains("device_id"))
+                assertTrue(response.contains("200 OK"))
+                assertTrue(response.contains("device_id"))
             }
             val page = request("/")
             assertEquals(200, page.first); assertTrue(page.second.contains("Phone Use"))

@@ -4,7 +4,9 @@
 
 ## 信任与用户操作
 
-手机所有入口仅使用 HTTPS（TLS 1.2/1.3）。每次安装在 Android Keystore 中生成独立、不可导出的 EC P-256 密钥。Python 绑定证书 DER SubjectPublicKeyInfo（SPKI）的 SHA-256，不依赖 IP 或 JSON 中的自报指纹。没有 HTTP 降级、重定向、共享私钥或无校验的已授权连接。首次无凭证身份探测尚未认证，其公钥只是候选值，核对确认后才建立信任。
+8443 端口在同一监听器识别 HTTP 和 TLS。HTTPS（TLS 1.2/1.3）始终可用；实际来源为回环的 HTTP 始终可用，非回环 HTTP 需要开启默认关闭、持久化保存的“允许不安全的 HTTP 连接”。来源按 socket 对端 IP 判定，不信任 Host 或转发头。禁用的 HTTP 在配对、鉴权或路由处理前拒绝。关闭开关会关闭已有远程 HTTP 连接，并使其排队任务和正在等待的观察失效，不影响 HTTPS 或本机 HTTP。
+
+每次安装在 Android Keystore 中生成独立、不可导出的 EC P-256 密钥。Python 绑定证书 DER SubjectPublicKeyInfo（SPKI）的 SHA-256，不依赖 IP 或 JSON 中的自报指纹。原生客户端继续仅使用 HTTPS，不进行 HTTP 降级、重定向或无校验的已授权连接，也不共享私钥。首次无凭证身份探测尚未认证，其公钥只是候选值，核对确认后才建立信任。
 
 首次配对时，用户逐位对照手机和桥接独立显示的**全部八位码**，在手机批准，并在控制端确认一致。CLI 要求输入 `yes`；MCP 只能在用户明确确认后提交 `confirm_pairing:true`。AI 不得通过手机控制工具读取核对码或代为批准，不得以服务端返回、等待时间代替用户确认，不得预先批准新配对。伪装服务器也能自称已获批准，因此只在手机点击不足以让控制端建立信任。之后每次连接自动验证已保存公钥，无需再次确认。
 
@@ -32,12 +34,16 @@ code       = zero_pad_8(big_endian_uint32(digest[0:4]) mod 100000000)
 
 ## 持久化、升级与换钥
 
-手机密钥在服务和 App 重启后保留。凭证使用新的存储空间，使可能已暴露的 HTTP token 无法控制 HTTPS 服务。Python 自动将旧地址迁移为 HTTPS，但丢弃未绑定公钥的凭证和未完成请求。两端均需更新，并重新配对一次。
+手机密钥在服务和 App 重启后保留。HTTPS 迁移使用独立于历史纯 HTTP 版本的凭证存储空间，历史凭证仍然无效。开启可选 HTTP 不重置现有配对。Python 自动将旧地址迁移为 HTTPS，但丢弃未绑定公钥的凭证和未完成请求。两端均需更新，并重新配对一次。
 
 IP 变化不会改变公钥身份。密钥不匹配时在发送 HTTP 数据前失败，不会覆盖旧指纹。若确实重装或重置了设备，先独立核实，在手机撤销旧客户端，再执行 `python CLIENT forget-device --device-id DEVICE_ID` 显式删除本地绑定，重新配对。不得因网络报错自动删除或重绑。SPKI 绑定允许使用同一密钥更新证书；原生客户端的信任不依赖公共 CA 链、主机名或证书日期。手机密钥和身份、凭证偏好设置不参与备份迁移。
 
 ## 浏览器边界
 
-浏览器直连使用 HTTPS，以及 Secure、HttpOnly、SameSite=Strict Cookie，保留严格的 IP Host 和 HTTPS Origin 检查。网页 JavaScript 无法替浏览器认证不可信证书。浏览器原有六位授权码不是原生八位 SAS 协议，不能替代证书信任。使用浏览器前需独立建立证书信任，不应盲目跳过警告；需要自动完成原生信任流程时使用 MCP／CLI。本次不添加本地网页代理、域名配置或公共 CA。
+HTTPS 浏览器会话继续使用名为 `phoneuse_client_PORT` 的 Secure、HttpOnly、SameSite=Strict Cookie。HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，保留 HttpOnly、SameSite=Strict，但不设置 Secure。每种传输方式仅读取自身的 Cookie。HTTP 仍要求配对与鉴权，但不提供加密或 TLS 服务器认证，同一网络中的其他人可能读取屏幕内容、操作和凭据。原生客户端继续使用现有 TLS 公钥绑定流程。
+
+Host 限制为连接接收端 IP 和手机上显式配置的公网地址；Origin 若存在，必须与请求协议、Host 和端口同源。拒绝 same-site 与 cross-site API 请求，不提供 CORS 放行。仅 `GET /` 允许 Android 启动浏览器的跨站导航，不放行配对、脚本或 API。任意解析到手机的域名不会获准。支持 IPv4 和 IPv6 字面地址。公网地址展示不负责配置 DNS、路由、端口映射、反向代理或公共 CA 证书。
+
+网页 JavaScript 无法替浏览器认证不可信 HTTPS 证书。浏览器六位授权码不是原生八位 SAS 协议，不能替代证书信任。HTTPS 浏览器访问需独立建立证书信任，不应盲目跳过警告。App 的本机入口始终为 `http://127.0.0.1:8443/`。
 
 验证包括 Kotlin/Python 共同测试向量、真实回环 TLS、公钥替换时发送前拒绝、本地确认门槛、旧凭证迁移，以及 Android Keystore TLS、配对、API、MCP 仪器测试。这些是回归证据，不代表独立密码学审计。

@@ -2,16 +2,20 @@ package ai.nidhoggfgg.phoneuse.ui
 
 import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.ui.theme.ThemePreference
+import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -27,6 +31,11 @@ internal fun SettingsScreen() {
     val context = LocalContext.current
     var selectedTheme by remember { mutableIntStateOf(ThemePreference.read(context)) }
     val selectedLanguage = AppCompatDelegate.getApplicationLocales()[0]?.language.orEmpty()
+    val connections = remember(context) { ConnectionSettings(context) }
+    var allowHttp by remember { mutableStateOf(connections.allowInsecureHttp) }
+    var publicHost by rememberSaveable { mutableStateOf(connections.publicHost) }
+    var savedHost by remember { mutableStateOf(connections.publicHost) }
+    var addressError by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -75,6 +84,32 @@ internal fun SettingsScreen() {
                     }
                 }
             }
+        }
+        SectionCard {
+            Row(Modifier.fillMaxWidth().toggleable(value = allowHttp, role = Role.Switch, onValueChange = {
+                connections.allowInsecureHttp = it
+                allowHttp = it
+            }).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.allow_insecure_http), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Switch(checked = allowHttp, onCheckedChange = null)
+            }
+            Text(stringResource(R.string.insecure_http_help), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        SectionCard {
+            Text(stringResource(R.string.public_address), style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(value = publicHost, onValueChange = { publicHost = it; addressError = false },
+                modifier = Modifier.fillMaxWidth(), singleLine = true, isError = addressError,
+                label = { Text(stringResource(R.string.public_address)) },
+                supportingText = { Text(stringResource(if (addressError) R.string.public_address_invalid else R.string.public_address_hint)) })
+            Text(stringResource(R.string.public_address_help), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(enabled = publicHost != savedHost, onClick = {
+                runCatching { connections.publicHost = publicHost }.onSuccess {
+                    savedHost = connections.publicHost; publicHost = savedHost; addressError = false
+                }.onFailure { addressError = true }
+            }) { Text(stringResource(R.string.save_address)) }
         }
     }
 }

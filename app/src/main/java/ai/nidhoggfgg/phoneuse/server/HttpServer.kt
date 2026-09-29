@@ -13,26 +13,27 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.net.ServerSocket
 import java.net.Socket
-import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 import java.util.UUID
 
-/** HTTP/1.1 over TLS, one request per connection. Plaintext is never accepted. */
+/** HTTP/1.1 and TLS share one listener and the same routes, one request per connection. */
 class HttpServer(private val identities: IdentityStore, private val controller: DeviceController,
     private val assets: android.content.res.AssetManager,
     private val serviceInstanceId: String = UUID.randomUUID().toString(),
+    allowInsecureHttp: Boolean = false,
+    private val publicHost: () -> String = { "" },
     private val connected: (String) -> Unit) {
+    private val transportPolicy = HttpTransportPolicy(allowInsecureHttp)
     private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
     @Volatile private var listener: ServerSocket? = null
+    fun setAllowInsecureHttp(allow: Boolean) { transportPolicy.update(allow) }
     fun start(port: Int = 8443) {
-        val socket = (identities.tls.context.serverSocketFactory.createServerSocket() as SSLServerSocket).apply {
-            enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
-        }
+        val socket = ServerSocket()
         try {
             socket.reuseAddress = true
-            socket.bind(InetSocketAddress("0.0.0.0", port), 16)
+            socket.bind(InetSocketAddress(port), 16)
         } catch (e: Exception) { socket.close(); throw e }
         listener = socket
         Thread({
@@ -44,7 +45,9 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                     try { workers.execute {
                         // Includes request parsing, bounded queueing and up to 60 seconds of condition observation.
                         val timeout = deadlines.schedule({ runCatching { client.close() } }, 90, TimeUnit.SECONDS)
-                        try { client.use { handle(it) } } finally { timeout.cancel(false); clients.remove(client) }
+                        try { client.use { acceptProtocol(it) } } finally {
+                            timeout.cancel(false); transportPolicy.remove(client); clients.remove(client)
+                        }
                     } }
                     catch (_: java.util.concurrent.RejectedExecutionException) { clients.remove(client); client.close() }
                 } catch (_: Exception) { if (!socket.isClosed) stop() }
@@ -60,12 +63,36 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private data class Response(val status: Int, val body: JSONObject? = null,
         val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST",
         val cookie: String? = null)
-    private fun cookie(token: String, port: Int) =
-        "phoneuse_client_$port=$token; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
+    private fun cookieName(port: Int, secure: Boolean) = if (secure) "phoneuse_client_$port" else "phoneuse_http_client_$port"
+    private fun cookie(token: String, port: Int, secure: Boolean) =
+        "${cookieName(port, secure)}=$token; Path=/; ${if (secure) "Secure; " else ""}HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
     private class HttpError(val status: Int, message: String) : RuntimeException(message)
-    private fun handle(socket: Socket) {
+    private fun acceptProtocol(socket: Socket) {
         try {
-            (socket as SSLSocket).startHandshake()
+            val secure = ConnectionProtocol.isTls(socket)
+            val checkTransport = transportPolicy.register(socket, secure)
+            if (checkTransport == null) {
+                write(socket, Response(403, json("error" to "Non-loopback HTTP connections are disabled")))
+                return
+            }
+            if (secure) {
+                (identities.tls.context.socketFactory.createSocket(socket, socket.inetAddress.hostAddress, socket.port, true) as SSLSocket).use { tls ->
+                    tls.useClientMode = false
+                    tls.enabledProtocols = arrayOf("TLSv1.3", "TLSv1.2")
+                    tls.soTimeout = socket.soTimeout
+                    tls.startHandshake()
+                    handle(tls, true, checkTransport)
+                }
+            } else handle(socket, false, checkTransport)
+        } catch (_: java.io.IOException) {
+            // A closed connection, invalid TLS handshake or timeout cannot fall back to plaintext.
+        } catch (e: Exception) {
+            android.util.Log.w("PhoneUseHttp", "Protocol detection failed: ${e.javaClass.simpleName}")
+        }
+    }
+    private fun handle(socket: Socket, secure: Boolean, checkTransport: () -> Unit) {
+        try {
+            checkTransport()
             val input = BufferedInputStream(socket.inputStream)
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
             fun line(): String {
@@ -97,9 +124,10 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             // Android ACTION_VIEW launches can mark the public landing page as cross-site.
             // Only GET / is public navigation; scripts, pairing and API still require same origin.
             if (!BrowserAccess.allowed(headers, socket.localAddress.hostAddress.orEmpty(), socket.localPort,
-                    publicPage = request[0] == "GET" && path == "/")) {
-                throw HttpError(403, "Use the phone's IPv4 address and port; cross-origin access is not allowed")
+                    publicPage = request[0] == "GET" && path == "/", secure = secure, publicHost = publicHost())) {
+                throw HttpError(403, "Use the phone's IP or configured public address and port; cross-origin access is not allowed")
             }
+            checkTransport()
             if (request[0] == "GET" && path in setOf("/", "/app.js", "/i18n.js")) {
                 val file = if (path == "/") "index.html" else path.removePrefix("/")
                 val type = if (path == "/") "text/html; charset=utf-8" else "text/javascript; charset=utf-8"
@@ -117,7 +145,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             if (!isPairing && path !in setOf("/api", "/api/tools", "/mcp", "/browser/session", "/browser/forget"))
                 throw HttpError(404, "Unknown endpoint")
             val cookieToken = headers["cookie"]?.split(';')?.map { it.trim() }
-                ?.singleOrNull { it.startsWith("phoneuse_client_${socket.localPort}=") }?.substringAfter('=')
+                ?.singleOrNull { it.startsWith("${cookieName(socket.localPort, secure)}=") }?.substringAfter('=')
             val auth = headers["authorization"]
             val token = if (auth != null) auth.takeIf { it.startsWith("Bearer ") }?.removePrefix("Bearer ") else cookieToken
             val client = if (isPairing) null else token?.let(identities::authenticate)
@@ -175,6 +203,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 } else when (char) { '"' -> quoted = true; '{', '[' -> { if (++depth > 64) throw HttpError(400, "JSON nesting too deep") }; '}', ']' -> depth-- }
             }
             val payload = try { JSONObject(raw) } catch (_: Exception) { throw HttpError(400, "Invalid JSON object") }
+            checkTransport()
             val response = if (isPairing) {
                 try {
                     if (pairingPath == "/pair/request") {
@@ -192,7 +221,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                         if (path.startsWith("/browser/") && result.optString("status") == "approved") {
                             val browserToken = result.remove("token") as String
                             result.remove("token_type")
-                            Response(200, result, cookie = cookie(browserToken, socket.localPort))
+                            Response(200, result, cookie = cookie(browserToken, socket.localPort, secure))
                         } else Response(200, result)
                     }
                 } catch (e: DeviceError) {
@@ -200,22 +229,23 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 }
             } else if (path == "/browser/session") {
                 // Migrate a previously saved browser Bearer credential without pairing again.
-                Response(200, json("paired" to true, "client_id" to client), cookie = cookie(token!!, socket.localPort))
+                Response(200, json("paired" to true, "client_id" to client), cookie = cookie(token!!, socket.localPort, secure))
             } else if (path == "/browser/forget") {
                 identities.revoke(client!!)
                 identities.pairing.revoked(client)
                 controller.revokeClient(client)
-                Response(200, json("paired" to false), cookie = cookie("", socket.localPort))
+                Response(200, json("paired" to false), cookie = cookie("", socket.localPort, secure))
             } else {
                 connected(client!!)
-                if (path == "/mcp") mcp(client, payload)
+                if (path == "/mcp") mcp(client, payload, checkTransport)
                 else {
                     val name = payload.string("tool")
                     if (payload.has("arguments") && payload.opt("arguments") !is JSONObject) throw HttpError(400, "arguments must be an object")
                     val args = payload.optJSONObject("arguments") ?: JSONObject()
-                    Response(200, callTool(client, name, args))
+                    Response(200, callTool(client, name, args, checkTransport))
                 }
             }
+            checkTransport()
             write(socket, response)
         } catch (e: HttpError) { runCatching { write(socket, Response(e.status, json("error" to e.message))) } }
         catch (e: DeviceError) { runCatching { write(socket, Response(400, errorResult(e))) } }
@@ -224,7 +254,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             runCatching { write(socket, Response(500, json("error" to "Request failed"))) }
         }
     }
-    private fun mcp(client: String, request: JSONObject): Response {
+    private fun mcp(client: String, request: JSONObject, checkTransport: () -> Unit): Response {
         val id = request.opt("id")
         fun rpcError(code: Int, message: String) = Response(200, json("jsonrpc" to "2.0", "id" to id,
             "error" to json("code" to code, "message" to message)))
@@ -249,7 +279,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 if (params.has("arguments") && params.opt("arguments") !is JSONObject) return rpcError(-32602, "arguments must be an object")
                 if ((0 until ToolCatalog.all().length()).none { ToolCatalog.all().getJSONObject(it).getString("name") == name })
                     return rpcError(-32602, "Unknown tool")
-                val value = callTool(client, name, params.optJSONObject("arguments") ?: JSONObject())
+                val value = callTool(client, name, params.optJSONObject("arguments") ?: JSONObject(), checkTransport)
                 resultIdentity(serializeMcpToolResult(value))
             }
             else -> return rpcError(-32601, "Method not found")
@@ -261,7 +291,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         identity.keys().forEach { put(it, identity.get(it)) }
     }
 
-    private fun callTool(client: String, name: String, args: JSONObject): JSONObject {
+    private fun callTool(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         fun mismatch(code: String, reason: String, expected: String, actual: String) = resultIdentity(json(
             "state" to "failed", "action_executed" to false,
             "error" to json("code" to code, "reason" to reason,
@@ -277,7 +307,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
         }
         val arguments = JSONObject(args.toString()).apply { remove("device_id"); remove("service_instance_id") }
         // Controller retains action objects for deduplication. Decorate a copy, never those shared objects.
-        return resultIdentity(JSONObject(controller.call(client, name, arguments).toString()))
+        return resultIdentity(JSONObject(controller.call(client, name, arguments, checkTransport).toString()))
     }
 
     private fun resultIdentity(result: JSONObject): JSONObject = attachResultIdentity(result, identities.deviceIdentity.id, serviceInstanceId)

@@ -37,12 +37,19 @@ class DashboardSettingsTest {
     private var originalName: String? = null
     private var originalEnabled = false
     private var originalPaused = false
+    private val connections = ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context)
+    private var originalHttp = false
+    private var originalPublicHost = ""
 
     @Before fun launch() {
         originalLocales = LocaleManagerCompat.getApplicationLocales(context)
         originalName = identityPreferences.getString("name", null)
         originalEnabled = servicePreferences.getBoolean("enabled", false)
         originalPaused = servicePreferences.getBoolean("paused", false)
+        originalHttp = connections.allowInsecureHttp
+        originalPublicHost = connections.publicHost
+        connections.allowInsecureHttp = false
+        connections.publicHost = ""
         context.stopService(Intent(context, PhoneUseService::class.java))
         compose.waitUntil(10_000) { PhoneUseService.current == null }
         servicePreferences.edit().putBoolean("enabled", false).putBoolean("paused", false).commit()
@@ -70,6 +77,8 @@ class DashboardSettingsTest {
             if (originalName == null) remove("name") else putString("name", originalName)
         }.commit()
         servicePreferences.edit().putBoolean("enabled", originalEnabled).putBoolean("paused", originalPaused).commit()
+        connections.allowInsecureHttp = originalHttp
+        connections.publicHost = originalPublicHost
     }
 
     @Test fun deviceNameEditsAreExplicitValidatedAndPersistWithoutChangingIdentity() {
@@ -144,7 +153,8 @@ class DashboardSettingsTest {
             compose.onNodeWithText("English").performClick()
             waitForText("Language")
             compose.onNodeWithText("English").assertIsSelected()
-            compose.onNodeWithText("Follow system").performClick()
+            // The theme and language groups both contain this label; choose the language row.
+            compose.onAllNodesWithText("Follow system")[1].performScrollTo().performClick()
             compose.waitUntil(5_000) { AppCompatDelegate.getApplicationLocales().isEmpty }
             // Both the toolbar and system Back return from the settings page to the dashboard.
             scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
@@ -153,6 +163,61 @@ class DashboardSettingsTest {
             clientId?.let { service.revokeClient(it) }
             service.identities.pairing.clear()
         }
+    }
+
+
+    @Test fun insecureHttpAndPublicAddressPersistAndUpdateTheRunningService() {
+        val remote = java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
+            .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>()
+            .first { !it.isLoopbackAddress }.hostAddress!!
+        fun status(address: String, host: String = address): Int = java.net.Socket(address, 8443).use { socket ->
+            socket.soTimeout = 5000
+            socket.outputStream.write("GET /identity HTTP/1.1\r\nHost: $host:8443\r\n\r\n".toByteArray())
+            socket.inputStream.bufferedReader().readLine().split(' ')[1].toInt()
+        }
+        compose.onNodeWithText("Start service").performClick()
+        compose.waitUntil(10_000) { PhoneUseService.current != null }
+        val running = PhoneUseService.current
+        assertEquals(200, status("127.0.0.1"))
+        assertEquals(403, status(remote))
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOff().performClick()
+        assertTrue(connections.allowInsecureHttp)
+        assertEquals(200, status(remote))
+        assertSame(running, PhoneUseService.current)
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("phone.example")
+        compose.onNodeWithText("Save address").performScrollTo().performClick()
+        assertEquals("phone.example", connections.publicHost)
+        assertEquals(200, status(remote, "phone.example"))
+        screenshot("http-settings-en")
+        instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+        waitForText("允许不安全的 HTTP 连接")
+        compose.onNodeWithText("保存地址").performScrollTo()
+        screenshot("http-settings-zh")
+        instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")) }
+        waitForText("Allow insecure HTTP connections")
+        scenario.recreate()
+        compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOn()
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("https://$remote:8443", substring = true).performScrollTo().assertTextContains("http://$remote:8443", substring = true)
+        compose.onNodeWithText("https://phone.example:8443", substring = true).assertTextContains("http://phone.example:8443", substring = true)
+        compose.onAllNodesWithText("127.0.0.1", substring = true).assertCountEquals(0)
+        screenshot("http-addresses-en")
+        context.stopService(Intent(context, PhoneUseService::class.java))
+        compose.waitUntil(10_000) { PhoneUseService.current == null }
+        scenario.close()
+        scenario = ActivityScenario.launch(MainActivity::class.java)
+        compose.waitUntil(10_000) { PhoneUseService.current != null }
+        assertEquals(200, status(remote, "phone.example"))
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOn().performClick()
+        assertEquals(403, status(remote))
+        assertEquals(200, status("127.0.0.1"))
+        scenario.recreate()
+        compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOff()
+        compose.onNodeWithContentDescription("Back").performClick()
+        val addresses = compose.onNodeWithText("https://phone.example:8443", substring = true).performScrollTo()
+        assertFalse(addresses.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString().contains("http://"))
     }
 
     private fun waitForText(text: String) {

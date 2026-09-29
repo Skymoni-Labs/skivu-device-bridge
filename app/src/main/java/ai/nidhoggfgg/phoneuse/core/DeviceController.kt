@@ -32,8 +32,9 @@ class DeviceController(
     @Volatile private var active: Request? = null
     val actionNames = setOf("tap", "long_press", "swipe", "scroll", "input_text", "back", "home", "recents", "launch_app")
 
-    fun call(client: String, name: String, args: JSONObject): JSONObject {
+    fun call(client: String, name: String, args: JSONObject, checkTransport: () -> Unit = {}): JSONObject {
         try {
+            checkTransport()
             checkAccess(client)
             ToolCatalog.validate(name, args)
             return when (name) {
@@ -42,12 +43,12 @@ class DeviceController(
                 "cancel" -> cancel(client, args)
                 "acquire_device" -> acquireDevice(client, args)
                 "release_device" -> releaseDevice(client, args)
-                "observe", "list_apps" -> serialRead(client, name, args)
+                "observe", "list_apps" -> serialRead(client, name, args, checkTransport)
                 "wait_for_change" -> {
                     val generation = gate.generation
-                    backend.waitForChange(args) { checkAccess(client); gate.check(generation) }
+                    backend.waitForChange(args) { checkTransport(); checkAccess(client); gate.check(generation) }
                 }
-                in actionNames -> action(client, name, args)
+                in actionNames -> action(client, name, args, checkTransport)
                 else -> fail("UNKNOWN_TOOL", "Unknown tool: $name")
             }
         } catch (e: DeviceError) {
@@ -64,20 +65,23 @@ class DeviceController(
         if (gate.stopped) fail("STOPPED", "Service is stopped")
         if (!authorized(client)) fail("UNAUTHORIZED", "Client credential was revoked")
     }
-    private fun serialRead(client: String, name: String, args: JSONObject): JSONObject {
+    private fun serialRead(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         if (gate.paused) fail("PAUSED", "Resume the service on the phone first")
         val generation = gate.generation
         val result = CompletableFuture<JSONObject>()
         try { executor.execute {
             try {
+                checkTransport()
                 checkAccess(client)
                 if (gate.paused || gate.generation != generation || result.isDone) fail("CANCELLED", "Read invalidated")
                 val check = {
+                    checkTransport()
                     checkAccess(client)
                     gate.check(generation)
                     if (result.isDone) fail("CANCELLED", "Read invalidated")
                 }
                 val value = if (name == "observe") backend.observe(args, client, check) else backend.listApps()
+                checkTransport()
                 checkAccess(client)
                 // A backend failure may include a valid earlier snapshot. Preserve it after cancellation,
                 // while a revoked credential or stopped service still cannot receive scene data.
@@ -95,7 +99,7 @@ class DeviceController(
             result.get()
         }
     }
-    private fun action(client: String, name: String, args: JSONObject): JSONObject {
+    private fun action(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
         val id = args.string("request_id", 128)
         val key = "$client:$id"
         val signature = name + canonical(args)
@@ -114,7 +118,7 @@ class DeviceController(
                 gate.check(generation)
                 request = Request(client, id, signature, clock())
                 requests[key] = request
-                try { executor.execute { execute(request, name, args, generation) } }
+                try { executor.execute { execute(request, name, args, generation, checkTransport) } }
                 catch (_: java.util.concurrent.RejectedExecutionException) {
                     complete(request, errorResult(DeviceError("BUSY", "Device queue is full"))
                         .put("request_id", id).put("action_executed", false))
@@ -125,9 +129,10 @@ class DeviceController(
             request.result.getNow(pending(request))
         }
     }
-    private fun execute(request: Request, name: String, args: JSONObject, generation: Long) {
+    private fun execute(request: Request, name: String, args: JSONObject, generation: Long, checkTransport: () -> Unit) {
         if (request.result.isDone) return
         val check = {
+            checkTransport()
             checkAccess(request.client)
             gate.check(generation)
             if (request.cancelled) fail("CANCELLED", "Request cancelled")
@@ -150,7 +155,7 @@ class DeviceController(
             complete(request, result)
         } catch (e: Exception) {
             val state = when ((e as? DeviceError)?.code) {
-                "CANCELLED", "UNAUTHORIZED", "STOPPED" -> "cancelled"
+                "CANCELLED", "UNAUTHORIZED", "STOPPED", "TRANSPORT_DISABLED" -> "cancelled"
                 "RESULT_UNKNOWN" -> "unknown"
                 else -> if (e is DeviceError) "failed" else "unknown"
             }

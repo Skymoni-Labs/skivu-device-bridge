@@ -497,4 +497,32 @@ class DeviceControllerTest {
             assertEquals(1, backend.calls.get())
         } finally { controller.stop() }
     }
+    @Test fun disabledTransportCancelsQueuedInputWithoutRevokingTheClient() {
+        val backend = Backend().apply { entered = CountDownLatch(1); release = CountDownLatch(1) }
+        val controller = DeviceController(backend, { 100L }, { true })
+        val revoked = java.util.concurrent.atomic.AtomicBoolean(false)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val first = pool.submit<JSONObject> { controller.call("client", "home", action("tls-first")) }
+            assertTrue(backend.entered!!.await(2, TimeUnit.SECONDS))
+            val remote = pool.submit<JSONObject> {
+                controller.call("client", "home", action("http-queued")) {
+                    if (revoked.get()) fail("TRANSPORT_DISABLED", "HTTP disabled")
+                }
+            }
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
+            while (controller.call("client", "get_status", action("http-queued")).optJSONObject("request") == null && System.nanoTime() < deadline)
+                Thread.sleep(5)
+            assertNotNull(controller.call("client", "get_status", action("http-queued")).optJSONObject("request"))
+            revoked.set(true)
+            backend.release!!.countDown()
+            assertEquals("executed", first.get(2, TimeUnit.SECONDS).getString("state"))
+            val rejected = remote.get(2, TimeUnit.SECONDS)
+            assertEquals("TRANSPORT_DISABLED", rejected.getJSONObject("error").getString("code"))
+            assertFalse(rejected.getBoolean("action_executed"))
+            assertEquals(1, backend.calls.get())
+            assertEquals("executed", controller.call("client", "home", action("tls-after")).getString("state"))
+        } finally { backend.release!!.countDown(); controller.stop(); pool.shutdownNow() }
+    }
+
 }

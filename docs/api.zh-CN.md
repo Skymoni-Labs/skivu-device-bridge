@@ -4,7 +4,7 @@
 
 ## 接入与身份
 
-监听 IPv4 `0.0.0.0:8443`，**仅支持 TLS 1.2/1.3 HTTPS**。每次安装在 Android Keystore 内生成不可导出的独立密钥与自签证书。原生客户端通过短码核对绑定 SHA-256 SPKI 公钥指纹，无需公共 CA 或复制长指纹。旧 HTTP 凭证失效，需重新配对。
+服务在 `8443` 同端口识别 **TLS 1.2/1.3 HTTPS 与 HTTP**。实际来源为回环的 HTTP 始终允许，其余 HTTP 默认在配对／鉴权前拒绝。持久化的不安全 HTTP 设置立即开启非回环 HTTP；关闭时断开已有远程 HTTP 请求并使其排队任务失效。两种传输方式仍需正常配对与鉴权。每次安装的 Android Keystore 不可导出密钥、自签证书与 SHA-256 SPKI 配对保持兼容，原生客户端继续使用公钥绑定的 HTTPS，不自动降级。
 
 ### 提交承诺 → 揭示随机数 → 双端核对确认 → 批准 → 领取
 
@@ -26,11 +26,13 @@ AI 使用 `phoneuse_connect`，不直接处理凭证。首次返回桥接本地�
 
 `GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 端点接受原生客户端的 `Authorization: Bearer TOKEN` 或浏览器自动携带的配对 Cookie。两者同时提供时以 Authorization 为准。所有 POST 请求使用 `Content-Type: application/json`；支持 Content-Length 和 chunked，正文最多 64 KiB。仅允许本服务同源浏览器请求，不提供跨域 CORS；Host 必须为连接所用手机 IPv4 和端口（例如 `192.168.1.20:8443`），Origin 若存在必须为相应 `https://IP:PORT`。域名或反向代理接入暂不支持。无 Origin 的原生客户端仍可使用。
+API/MCP 接受 Bearer 授权或与传输方式对应的浏览器配对 Cookie；显式 Authorization 优先。POST 使用 `Content-Type: application/json`，支持 Content-Length 和 chunked，正文最多 64 KiB。Host 必须匹配连接接收端 IP 和端口，或手机显式配置的公网地址；Origin 若存在，必须与请求协议和地址完全同源。拒绝 same-site 和 cross-site API 请求，不提供 CORS，不信任转发头。无 Origin 的原生客户端仍可使用。
 
-浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天，每次恢复会话时续期；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
+浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，HTTPS 浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 
-- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权并续期/清除 Cookie，不签发新身份。
+HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保留 HttpOnly、SameSite 和有效期。HTTPS 仅读取其原有 Secure Cookie，HTTP 仅读取自身 Cookie。HTTP 配对不提供传输加密或 TLS 服务器身份认证。
+
+- `GET /browser/session`：HTTP 200 返回 `{"paired":true,"client_id":"..."}` 或 `{"paired":false,"client_id":null}`，验证已有授权，不修改 Cookie 或签发新身份。
 - `POST /browser/session`：携带已有 Bearer 或 Cookie，正文 `{}`，换成同一身份的持久 Cookie。用于旧版打开标签页的自动迁移，成功后删除 sessionStorage 中的旧 token。
 - `POST /browser/forget`：需认证，正文 `{}`；撤销该客户端、清除 Cookie 与配对暂存响应，使排队动作失效。关闭页面本身不调用此接口。
 

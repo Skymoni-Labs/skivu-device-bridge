@@ -16,6 +16,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import ai.nidhoggfgg.phoneuse.ui.PhoneUseApp
 import ai.nidhoggfgg.phoneuse.ui.theme.PhoneUseTheme
 import ai.nidhoggfgg.phoneuse.ui.theme.ThemePreference
+import ai.nidhoggfgg.phoneuse.server.ConnectionAddresses
 
 class MainActivity : AppCompatActivity() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -31,7 +32,7 @@ class MainActivity : AppCompatActivity() {
                 PhoneUseApp(
                     onStartService = ::startEndpoint,
                     onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                    onOpenWebConsole = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://127.0.0.1:8443/"))) }
+                    onOpenWebConsole = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ConnectionAddresses.LOCAL_CONSOLE))) }
                 )
             }
         }

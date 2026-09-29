@@ -15,6 +15,7 @@ import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
 import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
+import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
 import java.util.UUID
 
 class PhoneUseService : Service() {
@@ -25,6 +26,10 @@ class PhoneUseService : Service() {
     private var server: HttpServer? = null
     private var starting = false
     private val settings by lazy { getSharedPreferences("service_state", MODE_PRIVATE) }
+    private val connectionSettings by lazy { ConnectionSettings(this) }
+    private val connectionListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == ConnectionSettings.ALLOW_HTTP) server?.setAllowInsecureHttp(connectionSettings.allowInsecureHttp)
+    }
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var lastClient: String? = null
     @Volatile private var lastContact = 0L
@@ -35,6 +40,7 @@ class PhoneUseService : Service() {
     }
     override fun onCreate() {
         super.onCreate()
+        connectionSettings.preferences.registerOnSharedPreferenceChangeListener(connectionListener)
         createNotificationChannel()
         val startingText = ContextCompat.getContextForLanguage(this).getString(R.string.service_starting)
         if (Build.VERSION.SDK_INT >= 34) startForeground(1, notification(startingText), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
@@ -85,7 +91,8 @@ class PhoneUseService : Service() {
                     }
                     if (settings.getBoolean("paused", false)) controller.pause()
                     try {
-                        server = HttpServer(identities, controller, assets, serviceInstanceId) { client ->
+                        server = HttpServer(identities, controller, assets, serviceInstanceId,
+                            allowInsecureHttp = connectionSettings.allowInsecureHttp, publicHost = { connectionSettings.publicHost }) { client ->
                             lastClient = client; lastContact = SystemClock.elapsedRealtime()
                             handler.post { if (!destroyed) updateNotification() }
                         }.also { it.start() }
@@ -142,6 +149,7 @@ class PhoneUseService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
         destroyed = true
+        connectionSettings.preferences.unregisterOnSharedPreferenceChangeListener(connectionListener)
         if (current === this) current = null
         if (::controller.isInitialized) controller.stop()
         if (::identities.isInitialized) identities.pairing.clear()

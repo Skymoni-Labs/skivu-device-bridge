@@ -4,7 +4,7 @@
 
 ## Access and identity
 
-The server listens on IPv4 `0.0.0.0:8443` using **TLS 1.2/1.3 only**. Each installation creates a non-exportable Android Keystore key and self-signed certificate. Native clients authenticate its SHA-256 SPKI pin through short-code pairing; no public CA or copied fingerprint is needed. HTTP-era credentials are invalidated and require new pairing.
+The server listens on port `8443`, accepting **TLS 1.2/1.3 HTTPS and HTTP on the same socket**. HTTP is always allowed for actual loopback peers and defaults to denied for all other peers, before pairing/authentication. The persistent insecure-HTTP setting enables non-loopback HTTP immediately; disabling it disconnects existing remote HTTP requests and invalidates their queued work. Normal pairing and authorization are required for both transports. Each installation retains its non-exportable Android Keystore key, certificate and SHA-256 SPKI pairing. Native clients continue to use pinned HTTPS without fallback.
 
 ### Commit → reveal → compare on both sides → approve → claim
 
@@ -24,11 +24,13 @@ Requests expire two minutes after creation; approval does not extend that time. 
 
 `GET /` serves a public console without credentials or device data. Navigation from another page, including `Sec-Fetch-Site: cross-site`, is allowed, subject to Host validation. Scripts, pairing, and API requests retain same-origin checks. Framing is forbidden. `GET /app.js` is public; authenticated `GET /api/tools` returns `{"tools":[...]}` using the same parameter definitions as MCP `tools/list`.
 
-API/MCP accept Bearer authorization or the browser's pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. There is no cross-origin CORS access. Host must be the phone IPv4 and port used to connect, such as `192.168.1.20:8443`; Origin, when present, must match `https://IP:PORT`. Domain names and reverse proxies are not currently supported. Native clients without Origin are allowed.
+API/MCP accept Bearer authorization or the browser's transport-specific pairing cookie; an explicit Authorization header takes precedence. POST bodies use `Content-Type: application/json`, support Content-Length or chunked transfer, and have a 64 KiB limit. Host must match the receiving IP and port, or the public host explicitly configured on the phone. Origin, when present, must exactly match the request scheme and authority. Same-site and cross-site API requests are rejected; no CORS access is provided. Forwarding headers are not trusted. Native clients without Origin are allowed.
 
-Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. This requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days and is renewed on session recovery, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
+Browser pairing uses `POST /browser/pair/request` and `POST /browser/pair/status` with `{"client_name":"browser"}` and the original six-digit authorization code. Over HTTPS this requires independently trusted browser TLS; it is not the native eight-digit SAS protocol. Approval omits `token/token_type` and sets `phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`. The cookie lasts up to 400 days, subject to browser cleanup policies. The Secure flag restricts cookies to HTTPS. JavaScript does not read the long-term credential.
 
-- `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates and renews or clears the cookie without issuing a new identity.
+HTTP uses a separate `phoneuse_http_client_PORT` cookie without Secure, with the same HttpOnly, SameSite and expiry attributes. HTTPS only reads its existing Secure cookie; HTTP only reads its own cookie. HTTP pairing does not provide transport encryption or TLS server identity.
+
+- `GET /browser/session`: returns HTTP 200 with `{"paired":true,"client_id":"..."}` or `{"paired":false,"client_id":null}`; validates authorization without modifying cookies or issuing a new identity.
 - `POST /browser/session`: authenticated Bearer or cookie plus `{}` exchanges the same identity for a persistent cookie. Old open tabs use it to migrate and delete the old sessionStorage token.
 - `POST /browser/forget`: authenticated `{}` revokes the client, clears its cookie and cached pairing response, and invalidates queued inputs. Closing the page does not call it.
 

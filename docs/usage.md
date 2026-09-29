@@ -4,7 +4,11 @@
 
 ## Web console
 
-Direct browser access uses `https://192.168.1.20:8443/` and requires independently established browser certificate trust. Its six-digit authorization code does not replace TLS authentication. For pairing without certificate installation, use MCP or the Python client below. The console still supports API forms, JSON editing and explicit screenshots.
+The app's **Open web console** button always opens `http://127.0.0.1:8443/`. Loopback HTTP is always available and still requires pairing. Remote browser access defaults to `https://192.168.1.20:8443/` and requires independently established certificate trust. Its six-digit authorization code does not replace TLS authentication. The console supports API forms, JSON editing and explicit screenshots.
+
+Settings → **Allow insecure HTTP connections** enables remote HTTP on the same port. It is off by default, persists across restarts, and takes effect immediately. Turning it off also disconnects existing non-loopback HTTP requests. HTTP does not encrypt screen content, actions, or credentials. Pairing and authorization remain required. HTTPS and HTTP have separate browser cookies; switching schemes may require pairing again.
+
+The app displays non-loopback network addresses and an optional public IP/domain configured in Settings, with HTTPS URLs and additional HTTP URLs only when enabled. Enter only a host (no scheme, port or path); clear it to remove it. Displaying an address does not make it reachable: routing and port forwarding to port 8443 remain the deployment's responsibility.
 
 The browser stores authorization in an HttpOnly cookie. Closing a tab, restarting the browser, or restarting the app does not normally require pairing again. Revoke access on the phone or use the console's unpair action. Clearing cookies or changing the browser address creates a new pairing context. Long-term tokens are not displayed or exported by the console.
 
@@ -56,7 +60,7 @@ Deleting the client configuration, clearing app data, uninstalling the phone app
 
 ## Network troubleshooting
 
-The service uses **HTTPS on port 8443** with per-installation public-key binding. There is no HTTP fallback or cloud relay. Clients need a route to the phone IPv4; the current Host/Origin policy does not support domain aliases or reverse proxies. See [Transport security](transport-security.md).
+The service accepts **HTTPS and HTTP on port 8443**. MCP/Python clients continue to require pinned HTTPS and never downgrade. Remote HTTP requires the explicit setting above. Host must match the receiving IP or configured public host; Origin must exactly match the request scheme and authority. Forwarding headers cannot change the peer's loopback classification. There is no cloud relay or automatic port mapping. See [Transport security](transport-security.md).
 
 For optional local development forwarding with ADB:
 

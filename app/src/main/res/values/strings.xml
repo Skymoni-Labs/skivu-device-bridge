@@ -15,7 +15,7 @@
     <string name="pause_control">Pause control</string>
     <string name="stop_service">Stop service</string>
     <string name="connection_pairing">Connection and pairing</string>
-    <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. Direct browser access requires certificate trust.</string>
+    <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. The local web console is always available over HTTP. Remote HTTPS browsers require certificate trust.</string>
     <string name="pairing_persistence_help">Pair each client once. An enabled service restarts when the app opens; pause state and paired clients are preserved.</string>
     <string name="open_web_console">Open web console</string>
     <string name="pairing_requests">Pairing requests</string>
@@ -29,7 +29,7 @@
     <string name="unpair">Unpair</string>
     <string name="notification_channel">Phone Use control</string>
     <string name="service_starting">Service starting</string>
-    <string name="http_start_failed">Could not start HTTPS service: %1$s</string>
+    <string name="http_start_failed">Could not start connection service: %1$s</string>
     <string name="client_storage_failed">Could not initialize client storage: %1$s</string>
     <string name="service_pairing_pending">Pairing request received · Open app to approve</string>
     <string name="service_paused">Control paused</string>
@@ -74,4 +74,11 @@
         <item quantity="one">%1$d second remaining</item>
         <item quantity="other">%1$d seconds remaining</item>
     </plurals>
+    <string name="allow_insecure_http">Allow insecure HTTP connections</string>
+    <string name="insecure_http_help">Allow HTTP through LAN or public addresses. Connections are not encrypted; other people on the same network may read screen content, actions, and credentials.</string>
+    <string name="public_address">Public access address</string>
+    <string name="public_address_hint">IP address or domain only, without a scheme or port. Leave blank to remove.</string>
+    <string name="public_address_invalid">Enter a valid non-loopback IP address or domain, without a scheme, port, or path.</string>
+    <string name="public_address_help">Displaying a public address does not make it reachable. Port forwarding and network access must be configured in your deployment.</string>
+    <string name="save_address">Save address</string>
 </resources>
