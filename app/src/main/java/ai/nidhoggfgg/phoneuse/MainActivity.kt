@@ -12,8 +12,10 @@ import android.view.WindowManager
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import ai.nidhoggfgg.phoneuse.ui.PhoneUseApp
 import ai.nidhoggfgg.phoneuse.ui.theme.PhoneUseTheme
+import ai.nidhoggfgg.phoneuse.ui.theme.ThemePreference
 
 class MainActivity : AppCompatActivity() {
     private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
@@ -21,6 +23,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppCompatDelegate.setDefaultNightMode(ThemePreference.read(this))
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         setContent {

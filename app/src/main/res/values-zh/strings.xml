@@ -61,6 +61,10 @@
     <string name="no_network_address">连接 Wi-Fi 后显示网络地址，仍可打开本机控制台。</string>
     <string name="unpair_failed">无法解除客户端配对，请重试。</string>
     <string name="language">语言</string>
+    <string name="theme">主题</string>
+    <string name="theme_system">跟随系统</string>
+    <string name="theme_light">亮色</string>
+    <string name="theme_dark">暗色</string>
     <string name="language_help">选择应用界面和通知使用的语言。</string>
     <string name="language_system">跟随系统</string>
     <string name="language_chinese">中文</string>

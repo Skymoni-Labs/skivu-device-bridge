@@ -62,6 +62,10 @@
     <string name="no_network_address">Connect to Wi-Fi to show a network address. The local console is still available.</string>
     <string name="unpair_failed">Could not unpair this client. Please try again.</string>
     <string name="language">Language</string>
+    <string name="theme">Theme</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
     <string name="language_help">Choose the language for the app and its notifications.</string>
     <string name="language_system">Follow system</string>
     <string name="language_chinese">中文</string>
