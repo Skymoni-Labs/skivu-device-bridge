@@ -11,9 +11,9 @@ object ConnectionAddresses {
 
     fun host(address: String): String = if (':' in address) "[${address.removeSurrounding("[", "]")}]" else address
 
-    fun publicHost(value: String): String {
+    fun allowedHost(value: String): String {
         val text = value.trim().lowercase()
-        if (text.isEmpty()) return ""
+        require(text.isNotEmpty())
         require(text.none { it.isWhitespace() } && '%' !in text)
         val uri = URI("https://${host(text)}")
         val parsed = requireNotNull(uri.host).removeSurrounding("[", "]")
@@ -25,31 +25,56 @@ object ConnectionAddresses {
                 parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 && (it == "0" || !it.startsWith('0')) }
             })
             val ip = InetAddress.getByName(parsed)
-            require(!ip.isLoopbackAddress && !ip.isAnyLocalAddress && !ip.isMulticastAddress && !ip.isLinkLocalAddress)
+            require(!ip.isAnyLocalAddress && !ip.isMulticastAddress && !ip.isLinkLocalAddress)
         } else {
-            require(parsed != "localhost" && !parsed.endsWith(".localhost") && parsed.length <= 253 &&
+            require(parsed.length <= 253 &&
                 parsed.split('.').all { it.matches(Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")) })
         }
         return parsed
     }
 
-    fun urls(addresses: List<String>, publicHost: String, allowHttp: Boolean, port: Int = PORT): List<String> =
-        (addresses + publicHost.takeIf { it.isNotEmpty() }.orEmpty()).filter { it.isNotEmpty() }.distinct().flatMap {
+    /** Canonicalize numeric IPv6 only; never resolve a domain while checking a request. */
+    fun canonicalHost(address: String): String = address.removeSurrounding("[", "]").lowercase().let {
+        if (':' in it) requireNotNull(InetAddress.getByName(it).hostAddress) else it
+    }
+
+    fun parseAllowlist(value: String): List<String> = value.lineSequence().filter { it.isNotBlank() }
+        .map(::allowedHost).distinctBy(::canonicalHost).toList()
+
+    fun permitsHost(address: String, receivingAddress: String, allowedHosts: List<String>): Boolean {
+        val candidates = allowedHosts.ifEmpty { listOf(receivingAddress) }
+        return candidates.any { canonicalHost(it) == canonicalHost(address) }
+    }
+
+    fun localConsoleAllowed(allowedHosts: List<String>): Boolean = permitsHost("127.0.0.1", "127.0.0.1", allowedHosts)
+
+    fun urls(addresses: List<String>, allowedHosts: List<String>, allowHttp: Boolean, port: Int = PORT): List<String> =
+        allowedHosts.ifEmpty { addresses }.filter { it.isNotEmpty() }.distinctBy(::canonicalHost).flatMap {
             listOfNotNull("https://${host(it)}:$port", if (allowHttp) "http://${host(it)}:$port" else null)
         }
 }
 
 class ConnectionSettings(context: Context) {
     val preferences = context.applicationContext.getSharedPreferences("connection_settings", Context.MODE_PRIVATE)
+    init {
+        if (!preferences.contains(ALLOWED_HOSTS) && preferences.contains(LEGACY_PUBLIC_HOST)) {
+            preferences.edit().putString(ALLOWED_HOSTS, preferences.getString(LEGACY_PUBLIC_HOST, ""))
+                .remove(LEGACY_PUBLIC_HOST).apply()
+        }
+    }
     var allowInsecureHttp: Boolean
         get() = preferences.getBoolean(ALLOW_HTTP, false)
         set(value) { preferences.edit().putBoolean(ALLOW_HTTP, value).apply() }
-    var publicHost: String
-        get() = preferences.getString(PUBLIC_HOST, "").orEmpty()
-        set(value) { preferences.edit().putString(PUBLIC_HOST, ConnectionAddresses.publicHost(value)).apply() }
+    var allowedHosts: List<String>
+        get() = ConnectionAddresses.parseAllowlist(preferences.getString(ALLOWED_HOSTS, "").orEmpty())
+        set(value) {
+            val normalized = value.map(ConnectionAddresses::allowedHost).distinctBy(ConnectionAddresses::canonicalHost)
+            preferences.edit().putString(ALLOWED_HOSTS, normalized.joinToString("\n")).remove(LEGACY_PUBLIC_HOST).apply()
+        }
 
     companion object {
         const val ALLOW_HTTP = "allow_insecure_http"
-        const val PUBLIC_HOST = "public_host"
+        const val ALLOWED_HOSTS = "allowed_hosts"
+        private const val LEGACY_PUBLIC_HOST = "public_host"
     }
 }

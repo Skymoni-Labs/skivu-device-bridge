@@ -44,7 +44,7 @@ class DashboardSettingsTest {
     private var originalPaused = false
     private val connections = ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context)
     private var originalHttp = false
-    private var originalPublicHost = ""
+    private var originalAllowedHosts = emptyList<String>()
 
     @Before fun launch() {
         originalLocales = LocaleManagerCompat.getApplicationLocales(context)
@@ -52,9 +52,9 @@ class DashboardSettingsTest {
         originalEnabled = servicePreferences.getBoolean("enabled", false)
         originalPaused = servicePreferences.getBoolean("paused", false)
         originalHttp = connections.allowInsecureHttp
-        originalPublicHost = connections.publicHost
+        originalAllowedHosts = connections.allowedHosts
         connections.allowInsecureHttp = false
-        connections.publicHost = ""
+        connections.allowedHosts = emptyList()
         context.stopService(Intent(context, PhoneUseService::class.java))
         compose.waitUntil(10_000) { PhoneUseService.current == null }
         servicePreferences.edit().putBoolean("enabled", false).putBoolean("paused", false).commit()
@@ -83,7 +83,7 @@ class DashboardSettingsTest {
         }.commit()
         servicePreferences.edit().putBoolean("enabled", originalEnabled).putBoolean("paused", originalPaused).commit()
         connections.allowInsecureHttp = originalHttp
-        connections.publicHost = originalPublicHost
+        connections.allowedHosts = originalAllowedHosts
     }
 
     @Test fun deviceNameEditsAreExplicitValidatedAndPersistWithoutChangingIdentity() {
@@ -290,7 +290,7 @@ class DashboardSettingsTest {
     }
 
 
-    @Test fun insecureHttpAndPublicAddressPersistAndUpdateTheRunningService() {
+    @Test fun insecureHttpAndAllowlistPersistAndUpdateTheRunningService() {
         val remote = java.net.NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
             .flatMap { it.inetAddresses.toList() }.filterIsInstance<java.net.Inet4Address>()
             .first { !it.isLoopbackAddress }.hostAddress!!
@@ -309,14 +309,22 @@ class DashboardSettingsTest {
         assertTrue(connections.allowInsecureHttp)
         assertEquals(200, status(remote))
         assertSame(running, PhoneUseService.current)
-        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("phone.example")
-        compose.onNodeWithText("Save address").performScrollTo().performClick()
-        assertEquals("phone.example", connections.publicHost)
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement(" Phone.Example \n$remote\n127.0.0.1\nphone.example")
+        compose.onNodeWithText("Save allowlist").performScrollTo().performClick()
+        assertEquals(listOf("phone.example", remote, "127.0.0.1"), connections.allowedHosts)
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("phone.example\nhttps://invalid.example")
+        compose.onNodeWithText("Save allowlist").performScrollTo().performClick()
+        waitForText(context.getString(R.string.access_allowlist_invalid))
+        compose.onNodeWithText(context.getString(R.string.access_allowlist_invalid)).performScrollTo().assertIsDisplayed()
+        screenshot("allowlist-invalid")
+        assertEquals(listOf("phone.example", remote, "127.0.0.1"), connections.allowedHosts)
+        compose.onNode(hasSetTextAction()).performTextReplacement("phone.example\n$remote\n127.0.0.1")
+        compose.onNodeWithText("Save allowlist").performScrollTo().performClick()
         assertEquals(200, status(remote, "phone.example"))
         screenshot("http-settings-en")
         instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
         waitForText("允许不安全的 HTTP 连接")
-        compose.onNodeWithText("保存地址").performScrollTo()
+        compose.onNodeWithText("保存白名单").performScrollTo()
         screenshot("http-settings-zh")
         instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")) }
         waitForText("Allow insecure HTTP connections")
@@ -325,7 +333,7 @@ class DashboardSettingsTest {
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithText("https://$remote:8443", substring = true).performScrollTo().assertTextContains("http://$remote:8443", substring = true)
         compose.onNodeWithText("https://phone.example:8443", substring = true).assertTextContains("http://phone.example:8443", substring = true)
-        compose.onAllNodesWithText("127.0.0.1", substring = true).assertCountEquals(0)
+        compose.onNodeWithText("https://127.0.0.1:8443", substring = true).assertExists()
         screenshot("http-addresses-en")
         context.stopService(Intent(context, PhoneUseService::class.java))
         compose.waitUntil(10_000) { PhoneUseService.current == null }
@@ -342,6 +350,37 @@ class DashboardSettingsTest {
         compose.onNodeWithContentDescription("Back").performClick()
         val addresses = compose.onNodeWithText("https://phone.example:8443", substring = true).performScrollTo()
         assertFalse(addresses.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString().contains("http://"))
+
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("phone.example")
+        compose.onNodeWithText("Save allowlist").performScrollTo().performClick()
+        assertEquals(403, status("127.0.0.1"))
+        assertEquals(200, status("127.0.0.1", "phone.example"))
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Open web console").performScrollTo().assertIsNotEnabled()
+        compose.onNodeWithText("https://$remote:8443", substring = true).assertDoesNotExist()
+        compose.onNodeWithText(context.getString(R.string.local_console_blocked)).assertIsDisplayed()
+        screenshot("allowlist-console-blocked")
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.onNode(hasSetTextAction()).performScrollTo().performTextReplacement("")
+        compose.onNodeWithText("Save allowlist").performScrollTo().performClick()
+        assertTrue(connections.allowedHosts.isEmpty())
+        assertEquals(200, status("127.0.0.1"))
+        assertEquals(403, status("127.0.0.1", "phone.example"))
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.onNodeWithText("Open web console").performScrollTo().assertIsEnabled()
+    }
+
+    @Test fun legacyPublicAddressMigratesOnceAndClearingRestoresTheDefault() {
+        connections.preferences.edit().remove(ai.nidhoggfgg.phoneuse.server.ConnectionSettings.ALLOWED_HOSTS)
+            .putString("public_host", "phone.example").commit()
+        val migrated = ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context)
+        assertEquals(listOf("phone.example"), migrated.allowedHosts)
+        assertFalse(migrated.preferences.contains("public_host"))
+        migrated.allowedHosts = emptyList()
+        assertTrue(ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context).allowedHosts.isEmpty())
+        assertThrows(Exception::class.java) { migrated.allowedHosts = listOf("phone.example", "https://invalid.example") }
+        assertTrue(migrated.allowedHosts.isEmpty())
     }
 
     private fun waitForText(text: String) {

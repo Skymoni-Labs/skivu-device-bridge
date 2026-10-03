@@ -29,7 +29,7 @@
     <string name="pause_control">暂停控制</string>
     <string name="stop_service">停止服务</string>
     <string name="connection_pairing">连接与配对</string>
-    <string name="connection_help">在同一网络通过 MCP 或 Python 客户端连接，逐位核对八位码后在此批准。本机 Web 控制台始终可通过 HTTP 使用，远程 HTTPS 浏览器访问需要单独信任证书。</string>
+    <string name="connection_help">在同一网络通过 MCP 或 Python 客户端连接，逐位核对八位码后在此批准。本机 Web 控制台使用 HTTP，同样受访问地址白名单限制；远程 HTTPS 浏览器访问需要单独信任证书。</string>
     <string name="pairing_persistence_help">每个客户端只需配对一次。重启 App 后自动恢复已启用的服务；暂停状态和配对记录都会保留。</string>
     <string name="open_web_console">打开 Web 控制台</string>
     <string name="pairing_requests">配对请求</string>
@@ -91,9 +91,12 @@
     </plurals>
     <string name="allow_insecure_http">允许不安全的 HTTP 连接</string>
     <string name="insecure_http_help">允许通过局域网或公网地址使用 HTTP。连接不会加密，屏幕内容、操作和凭据可能被同一网络中的其他人读取。</string>
-    <string name="public_address">公网访问地址</string>
-    <string name="public_address_hint">仅填写 IP 地址或域名，不含协议和端口。留空可移除。</string>
-    <string name="public_address_invalid">请输入有效的非回环 IP 地址或域名，不含协议、端口或路径。</string>
-    <string name="public_address_help">展示公网地址不代表已实现公网可达，端口映射和网络访问仍需由部署环境配置。</string>
-    <string name="save_address">保存地址</string>
+    <string name="access_allowlist">访问地址白名单</string>
+    <string name="access_allowlist_entries">允许的 IP 地址和域名</string>
+    <string name="access_allowlist_hint">每行一个 IP 地址或域名，不含协议、端口、路径或通配符。</string>
+    <string name="access_allowlist_invalid">请检查每一行：填写一个有效的 IP 地址或域名，不含协议、端口、路径或通配符。</string>
+    <string name="access_allowlist_help">留空时仅允许通过手机自身 IP 访问；保存地址后，仅允许通过列表中的地址访问。这里填写的是访问手机时使用的地址，不是连接者的来源 IP。如需本机 Web 控制台，请加入 127.0.0.1。仍需配对授权。</string>
+    <string name="access_allowlist_active">当前仅允许白名单中的地址，网络连通和端口映射仍需另行配置。</string>
+    <string name="local_console_blocked">白名单未允许本机 Web 控制台。请在设置中加入 127.0.0.1，或清空列表恢复默认 IP 访问。</string>
+    <string name="save_allowlist">保存白名单</string>
 </resources>

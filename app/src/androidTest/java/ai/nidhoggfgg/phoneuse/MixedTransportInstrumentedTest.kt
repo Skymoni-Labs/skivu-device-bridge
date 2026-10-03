@@ -99,7 +99,8 @@ class MixedTransportInstrumentedTest {
             }
         }
         val controller = DeviceController(backend, SystemClock::elapsedRealtime, identity::exists)
-        val server = HttpServer(identity, controller, context.assets, publicHost = { "phone.example" }) {}
+        val allowedHosts = java.util.concurrent.atomic.AtomicReference(emptyList<String>())
+        val server = HttpServer(identity, controller, context.assets, allowedHosts = { allowedHosts.get() }) {}
         val pool = Executors.newSingleThreadExecutor()
         var clientId: String? = null
         try {
@@ -120,7 +121,24 @@ class MixedTransportInstrumentedTest {
             assertTrue(identity.pairing.pending().isEmpty())
             assertEquals(200, request(identity, remote, "/identity", secure = true).status)
             server.setAllowInsecureHttp(true)
+            assertEquals(403, request(identity, remote, "/identity", host = "phone.example:$port").status)
+            allowedHosts.set(listOf("phone.example", "other.example"))
+            for (secure in listOf(false, true)) {
+                for (address in listOf(remote, "127.0.0.1", "::1")) {
+                    for (path in listOf("/", "/app.js", "/identity", "/api/tools", "/mcp", "/browser/pair/request"))
+                        assertEquals(403, request(identity, address, path, secure,
+                            body = if (path.endsWith("request")) json("client_name" to "blocked") else null).status)
+                    assertEquals(200, request(identity, address, "/identity", secure, host = "phone.example:$port").status)
+                    assertEquals(401, request(identity, address, "/api/tools", secure, host = "other.example:$port").status)
+                }
+            }
+            assertTrue(identity.pairing.pending().isEmpty())
+            allowedHosts.set(listOf(remote, "127.0.0.1", "::1", "phone.example"))
+            assertEquals(200, request(identity, remote, "/identity").status)
+            assertEquals(200, request(identity, "::1", "/identity").status)
             assertEquals(200, request(identity, remote, "/identity", host = "phone.example:$port").status)
+            allowedHosts.set(emptyList())
+            assertEquals(403, request(identity, remote, "/identity", host = "phone.example:$port").status)
             assertEquals(403, request(identity, remote, "/identity", host = "evil.example:$port").status)
             assertEquals(401, request(identity, remote, "/api/tools").status)
             val created = request(identity, remote, "/browser/pair/request", body = json("client_name" to "HTTP test")).also {

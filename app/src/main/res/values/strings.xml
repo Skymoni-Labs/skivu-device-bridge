@@ -30,7 +30,7 @@
     <string name="pause_control">Pause control</string>
     <string name="stop_service">Stop service</string>
     <string name="connection_pairing">Connection and pairing</string>
-    <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. The local web console is always available over HTTP. Remote HTTPS browsers require certificate trust.</string>
+    <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. The local web console uses HTTP and follows the access address allowlist. Remote HTTPS browsers require certificate trust.</string>
     <string name="pairing_persistence_help">Pair each client once. An enabled service restarts when the app opens; pause state and paired clients are preserved.</string>
     <string name="open_web_console">Open web console</string>
     <string name="pairing_requests">Pairing requests</string>
@@ -93,9 +93,12 @@
     </plurals>
     <string name="allow_insecure_http">Allow insecure HTTP connections</string>
     <string name="insecure_http_help">Allow HTTP through LAN or public addresses. Connections are not encrypted; other people on the same network may read screen content, actions, and credentials.</string>
-    <string name="public_address">Public access address</string>
-    <string name="public_address_hint">IP address or domain only, without a scheme or port. Leave blank to remove.</string>
-    <string name="public_address_invalid">Enter a valid non-loopback IP address or domain, without a scheme, port, or path.</string>
-    <string name="public_address_help">Displaying a public address does not make it reachable. Port forwarding and network access must be configured in your deployment.</string>
-    <string name="save_address">Save address</string>
+    <string name="access_allowlist">Access address allowlist</string>
+    <string name="access_allowlist_entries">Allowed IP addresses and domains</string>
+    <string name="access_allowlist_hint">One IP address or domain per line, without a scheme, port, path, or wildcard.</string>
+    <string name="access_allowlist_invalid">Check each line: enter one valid IP address or domain without a scheme, port, path, or wildcard.</string>
+    <string name="access_allowlist_help">Leave blank to allow access through the phone’s own IP addresses only. Once saved, only listed addresses are accepted. These are addresses used to reach the phone, not client IP addresses. Add 127.0.0.1 to use the local web console. Pairing is still required.</string>
+    <string name="access_allowlist_active">Only addresses in the allowlist are accepted. Network routing and port forwarding must be configured separately.</string>
+    <string name="local_console_blocked">The local web console is blocked by the allowlist. Add 127.0.0.1 in Settings or clear the list to restore default IP access.</string>
+    <string name="save_allowlist">Save allowlist</string>
 </resources>

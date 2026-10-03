@@ -94,7 +94,7 @@ class PhoneUseService : Service() {
                     if (settings.getBoolean("paused", false)) controller.pause()
                     try {
                         server = HttpServer(identities, controller, assets, serviceInstanceId,
-                            allowInsecureHttp = connectionSettings.allowInsecureHttp, publicHost = { connectionSettings.publicHost }) { client ->
+                            allowInsecureHttp = connectionSettings.allowInsecureHttp, allowedHosts = { connectionSettings.allowedHosts }) { client ->
                             lastClient = client; lastContact = SystemClock.elapsedRealtime()
                             handler.post { if (!destroyed) updateNotification() }
                         }.also { it.start() }

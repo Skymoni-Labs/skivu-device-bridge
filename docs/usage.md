@@ -4,11 +4,13 @@
 
 ## Web console
 
-The app's **Open web console** button always opens `http://127.0.0.1:8443/`. Loopback HTTP is always available and still requires pairing. Remote browser access defaults to `https://192.168.1.20:8443/` and requires independently established certificate trust. Its six-digit authorization code does not replace TLS authentication. The console supports API forms, JSON editing and explicit screenshots.
+The app's **Open web console** button always opens `http://127.0.0.1:8443/`. The button is disabled when a configured access address allowlist omits `127.0.0.1`; add it or clear the list to restore access. Loopback HTTP does not require the insecure-HTTP switch, but address checks and pairing still apply. Remote browser access defaults to `https://192.168.1.20:8443/` and requires independently established certificate trust. Its six-digit authorization code does not replace TLS authentication. The console supports API forms, JSON editing and explicit screenshots.
 
 Settings → **Allow insecure HTTP connections** enables remote HTTP on the same port. It is off by default, persists across restarts, and takes effect immediately. Turning it off also disconnects existing non-loopback HTTP requests. HTTP does not encrypt screen content, actions, or credentials. Pairing and authorization remain required. HTTPS and HTTP have separate browser cookies; switching schemes may require pairing again.
 
-The app displays non-loopback network addresses and an optional public IP/domain configured in Settings, with HTTPS URLs and additional HTTP URLs only when enabled. Enter only a host (no scheme, port or path); clear it to remove it. Displaying an address does not make it reachable: routing and port forwarding to port 8443 remain the deployment's responsibility.
+Settings → **Access address allowlist** accepts one IP address or domain per line, without a scheme, port, path, or wildcard. An empty list allows only the receiving IP of the phone, including loopback, and rejects domains. A nonempty list replaces that default: only listed destination addresses are accepted, including for the local console. These are addresses used to reach the phone, not client source IPs. Saving applies to subsequent requests without restarting the service; clearing the list restores the default. Domains match exactly, without automatically allowing subdomains. An existing public-address setting migrates to a single allowlist entry, so add any phone IPs you still need.
+
+The dashboard shows only listed addresses when an allowlist is configured; otherwise it shows the phone's non-loopback network addresses. HTTPS URLs are shown by default, with HTTP URLs added when enabled. Listing an address does not make it reachable: DNS, routing and port forwarding to port 8443 remain the deployment's responsibility. Pairing and authorization are still required.
 
 The browser stores authorization in an HttpOnly cookie. Closing a tab, restarting the browser, or restarting the app does not normally require pairing again. Revoke access on the phone or use the console's unpair action. Clearing cookies or changing the browser address creates a new pairing context. Long-term tokens are not displayed or exported by the console.
 
@@ -60,7 +62,7 @@ Deleting the client configuration, clearing app data, uninstalling the phone app
 
 ## Network troubleshooting
 
-The service accepts **HTTPS and HTTP on port 8443**. MCP/Python clients continue to require pinned HTTPS and never downgrade. Remote HTTP requires the explicit setting above. Host must match the receiving IP or configured public host; Origin must exactly match the request scheme and authority. Forwarding headers cannot change the peer's loopback classification. There is no cloud relay or automatic port mapping. See [Transport security](transport-security.md).
+The service accepts **HTTPS and HTTP on port 8443**. MCP/Python clients continue to require pinned HTTPS and never downgrade. Remote HTTP requires the explicit setting above. Host must match the receiving IP when the access address allowlist is empty, or an exact listed address when configured, always with the service port; Origin must exactly match the request scheme and authority. Forwarding headers cannot change the peer's loopback classification. There is no cloud relay or automatic port mapping. See [Transport security](transport-security.md).
 
 For optional local development forwarding with ADB:
 

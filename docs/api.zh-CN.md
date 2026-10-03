@@ -4,7 +4,7 @@
 
 ## 接入与身份
 
-服务在 `8443` 同端口识别 **TLS 1.2/1.3 HTTPS 与 HTTP**。实际来源为回环的 HTTP 始终允许，其余 HTTP 默认在配对／鉴权前拒绝。持久化的不安全 HTTP 设置立即开启非回环 HTTP；关闭时断开已有远程 HTTP 请求并使其排队任务失效。两种传输方式仍需正常配对与鉴权。每次安装的 Android Keystore 不可导出密钥、自签证书与 SHA-256 SPKI 配对保持兼容，原生客户端继续使用公钥绑定的 HTTPS，不自动降级。
+服务在 `8443` 同端口识别 **TLS 1.2/1.3 HTTPS 与 HTTP**。实际来源为回环的 HTTP 无需开启不安全 HTTP 设置，其余 HTTP 默认在配对／鉴权前拒绝。持久化的不安全 HTTP 设置立即开启非回环 HTTP；关闭时断开已有远程 HTTP 请求并使其排队任务失效。两种传输方式均受访问地址白名单限制，仍需正常配对与鉴权。每次安装的 Android Keystore 不可导出密钥、自签证书与 SHA-256 SPKI 配对保持兼容，原生客户端继续使用公钥绑定的 HTTPS，不自动降级。
 
 ### 提交承诺 → 揭示随机数 → 双端核对确认 → 批准 → 领取
 
@@ -26,7 +26,7 @@ AI 使用 `phoneuse_connect`，不直接处理凭证。首次返回桥接本地�
 
 `GET /` 提供内置 Web 控制台，`GET /app.js` 提供脚本，无须认证。`GET /api/tools` 需已配对客户端认证，返回 `{"tools":[...]}`，与 MCP `tools/list` 共用完整参数定义。
 
-API/MCP 接受 Bearer 授权或与传输方式对应的浏览器配对 Cookie；显式 Authorization 优先。POST 使用 `Content-Type: application/json`，支持 Content-Length 和 chunked，正文最多 64 KiB。Host 必须匹配连接接收端 IP 和端口，或手机显式配置的公网地址；Origin 若存在，必须与请求协议和地址完全同源。拒绝 same-site 和 cross-site API 请求，不提供 CORS，不信任转发头。无 Origin 的原生客户端仍可使用。
+API/MCP 接受 Bearer 授权或与传输方式对应的浏览器配对 Cookie；显式 Authorization 优先。POST 使用 `Content-Type: application/json`，支持 Content-Length 和 chunked，正文最多 64 KiB。访问地址白名单为空时，Host 必须匹配连接接收端 IP 和端口，拒绝域名；配置后，Host 必须精确匹配列表中的 IP／域名与服务端口，不再自动放行手机 IP 或回环地址。白名单检查目标地址而非客户端来源 IP，每次请求均读取当前配置。Origin 若存在，必须与请求协议和地址完全同源。拒绝 same-site 和 cross-site API 请求，不提供 CORS，不信任转发头。无 Origin 的原生客户端仍可使用。
 
 浏览器使用 `POST /browser/pair/request` 和 `POST /browser/pair/status`，HTTPS 浏览器依赖浏览器自身的证书信任；请求正文为 `{"client_name":"browser"}`，采用原有六位授权核对码，不执行原生八位 SAS 流程。浏览器证书警告不能由网页或桥接自动消除。批准响应不含 `token/token_type`，改为 `Set-Cookie: phoneuse_client_PORT=...; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=34560000`。Cookie 最长保存 400 天；浏览器自身的清理策略仍可能提前移除。Cookie 设置 Secure，仅在 HTTPS 中发送。页面 JavaScript 不读取长期凭证，关闭标签页或重启后由浏览器自动携带。
 

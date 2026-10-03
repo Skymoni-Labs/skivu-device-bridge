@@ -30,7 +30,9 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
                 .mapNotNull { it.hostAddress }.distinct()
         }.getOrDefault(emptyList())
     }
-    val urls = ConnectionAddresses.urls(addresses, settings.publicHost, settings.allowInsecureHttp)
+    val allowedHosts = settings.allowedHosts
+    val localConsoleAllowed = ConnectionAddresses.localConsoleAllowed(allowedHosts)
+    val urls = ConnectionAddresses.urls(addresses, allowedHosts, settings.allowInsecureHttp)
     val (ipv6Urls, primaryUrls) = urls.partition { it.substringAfter("://").startsWith("[") }
     var ipv6Open by rememberSaveable { mutableStateOf(false) }
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
@@ -53,10 +55,12 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
                 }
             }
         }
-        if (settings.publicHost.isNotEmpty()) Text(stringResource(R.string.public_address_help),
+        if (allowedHosts.isNotEmpty()) Text(stringResource(R.string.access_allowlist_active),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!localConsoleAllowed) Text(stringResource(R.string.local_console_blocked),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = onOpenWebConsole) { Text(stringResource(R.string.open_web_console)) }
+            OutlinedButton(onClick = onOpenWebConsole, enabled = localConsoleAllowed) { Text(stringResource(R.string.open_web_console)) }
             TextButton(onClick = { detailsOpen = !detailsOpen }) {
                 Text(stringResource(if (detailsOpen) R.string.hide_details else R.string.connection_details))
             }

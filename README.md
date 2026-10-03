@@ -48,7 +48,7 @@ Connect with the Python client or MCP bridge using `https://PHONE_IPV4:8443`. Co
 
 Pairing persists across client and app restarts until revoked or its stored credentials are removed. The browser and MCP bridge pair separately by default. Accessibility is required for device interaction; pairing and status queries can work without it.
 
-**Transport:** port 8443 uses HTTPS with per-device public-key binding. First pairing requires an eight-digit comparison and confirmation on both sides; subsequent connections verify the saved key automatically. Old HTTP credentials require new pairing. See [connection details](docs/usage.md). Loopback HTTP is always available on the same port; remote HTTP requires the default-off insecure connection setting. Pairing and authorization remain required.
+**Transport:** port 8443 uses HTTPS with per-device public-key binding. First pairing requires an eight-digit comparison and confirmation on both sides; subsequent connections verify the saved key automatically. Old HTTP credentials require new pairing. See [connection details](docs/usage.md). Loopback HTTP needs no insecure connection setting; remote HTTP requires that default-off setting. An empty access address allowlist accepts only the phone’s receiving IP; a configured list accepts only listed IPs/domains, including for the local console. Pairing and authorization remain required.
 
 ## Connect an AI agent
 

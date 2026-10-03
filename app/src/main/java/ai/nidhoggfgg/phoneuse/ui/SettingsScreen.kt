@@ -3,6 +3,7 @@ package ai.nidhoggfgg.phoneuse.ui
 import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.ui.theme.ThemePreference
 import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
+import ai.nidhoggfgg.phoneuse.server.ConnectionAddresses
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -33,8 +34,8 @@ internal fun SettingsScreen() {
     val selectedLanguage = AppCompatDelegate.getApplicationLocales()[0]?.language.orEmpty()
     val connections = remember(context) { ConnectionSettings(context) }
     var allowHttp by remember { mutableStateOf(connections.allowInsecureHttp) }
-    var publicHost by rememberSaveable { mutableStateOf(connections.publicHost) }
-    var savedHost by remember { mutableStateOf(connections.publicHost) }
+    var allowedHosts by rememberSaveable { mutableStateOf(connections.allowedHosts.joinToString("\n")) }
+    var savedHosts by remember { mutableStateOf(connections.allowedHosts.joinToString("\n")) }
     var addressError by rememberSaveable { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -98,18 +99,18 @@ internal fun SettingsScreen() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         SectionCard {
-            Text(stringResource(R.string.public_address), style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(value = publicHost, onValueChange = { publicHost = it; addressError = false },
-                modifier = Modifier.fillMaxWidth(), singleLine = true, isError = addressError,
-                label = { Text(stringResource(R.string.public_address)) },
-                supportingText = { Text(stringResource(if (addressError) R.string.public_address_invalid else R.string.public_address_hint)) })
-            Text(stringResource(R.string.public_address_help), style = MaterialTheme.typography.bodyMedium,
+            Text(stringResource(R.string.access_allowlist), style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(value = allowedHosts, onValueChange = { allowedHosts = it; addressError = false },
+                modifier = Modifier.fillMaxWidth(), minLines = 3, maxLines = 6, isError = addressError,
+                label = { Text(stringResource(R.string.access_allowlist_entries)) },
+                supportingText = { Text(stringResource(if (addressError) R.string.access_allowlist_invalid else R.string.access_allowlist_hint)) })
+            Text(stringResource(R.string.access_allowlist_help), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton(enabled = publicHost != savedHost, onClick = {
-                runCatching { connections.publicHost = publicHost }.onSuccess {
-                    savedHost = connections.publicHost; publicHost = savedHost; addressError = false
+            TextButton(enabled = allowedHosts != savedHosts, onClick = {
+                runCatching { connections.allowedHosts = ConnectionAddresses.parseAllowlist(allowedHosts) }.onSuccess {
+                    savedHosts = connections.allowedHosts.joinToString("\n"); allowedHosts = savedHosts; addressError = false
                 }.onFailure { addressError = true }
-            }) { Text(stringResource(R.string.save_address)) }
+            }) { Text(stringResource(R.string.save_allowlist)) }
         }
         AppLaunchCard(alwaysShow = true)
     }

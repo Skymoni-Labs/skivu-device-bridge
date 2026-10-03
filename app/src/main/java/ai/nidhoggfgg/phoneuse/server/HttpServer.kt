@@ -21,7 +21,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private val assets: android.content.res.AssetManager,
     private val serviceInstanceId: String = UUID.randomUUID().toString(),
     allowInsecureHttp: Boolean = false,
-    private val publicHost: () -> String = { "" },
+    private val allowedHosts: () -> List<String> = { emptyList() },
     private val connected: (String) -> Unit) {
     private val transportPolicy = HttpTransportPolicy(allowInsecureHttp)
     private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
@@ -124,8 +124,8 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             // Android ACTION_VIEW launches can mark the public landing page as cross-site.
             // Only GET / is public navigation; scripts, pairing and API still require same origin.
             if (!BrowserAccess.allowed(headers, socket.localAddress.hostAddress.orEmpty(), socket.localPort,
-                    publicPage = request[0] == "GET" && path == "/", secure = secure, publicHost = publicHost())) {
-                throw HttpError(403, "Use the phone's IP or configured public address and port; cross-origin access is not allowed")
+                    publicPage = request[0] == "GET" && path == "/", secure = secure, allowedHosts = allowedHosts())) {
+                throw HttpError(403, "Use an address permitted by the phone's access address allowlist and the service port; cross-origin access is not allowed")
             }
             checkTransport()
             if (request[0] == "GET" && path in setOf("/", "/app.js", "/i18n.js")) {

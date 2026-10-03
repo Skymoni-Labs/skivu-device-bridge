@@ -4,7 +4,7 @@
 
 ## 信任与用户操作
 
-8443 端口在同一监听器识别 HTTP 和 TLS。HTTPS（TLS 1.2/1.3）始终可用；实际来源为回环的 HTTP 始终可用，非回环 HTTP 需要开启默认关闭、持久化保存的“允许不安全的 HTTP 连接”。来源按 socket 对端 IP 判定，不信任 Host 或转发头。禁用的 HTTP 在配对、鉴权或路由处理前拒绝。关闭开关会关闭已有远程 HTTP 连接，并使其排队任务和正在等待的观察失效，不影响 HTTPS 或本机 HTTP。
+8443 端口在同一监听器识别 HTTP 和 TLS。HTTPS（TLS 1.2/1.3）和实际来源为回环的 HTTP 无需开启传输开关，非回环 HTTP 需要开启默认关闭、持久化保存的“允许不安全的 HTTP 连接”。传输限制按 socket 对端 IP 判定，不信任 Host 或转发头。所有 HTTP 和 HTTPS 请求还需通过下述访问地址白名单检查，回环请求也不例外。禁用的 HTTP 在配对、鉴权或路由处理前拒绝。关闭开关会关闭已有远程 HTTP 连接，并使其排队任务和正在等待的观察失效，不影响 HTTPS 或本机 HTTP。
 
 每次安装在 Android Keystore 中生成独立、不可导出的 EC P-256 密钥。Python 绑定证书 DER SubjectPublicKeyInfo（SPKI）的 SHA-256，不依赖 IP 或 JSON 中的自报指纹。原生客户端继续仅使用 HTTPS，不进行 HTTP 降级、重定向或无校验的已授权连接，也不共享私钥。首次无凭证身份探测尚未认证，其公钥只是候选值，核对确认后才建立信任。
 
@@ -42,8 +42,8 @@ IP 变化不会改变公钥身份。密钥不匹配时在发送 HTTP 数据前�
 
 HTTPS 浏览器会话继续使用名为 `phoneuse_client_PORT` 的 Secure、HttpOnly、SameSite=Strict Cookie。HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，保留 HttpOnly、SameSite=Strict，但不设置 Secure。每种传输方式仅读取自身的 Cookie。HTTP 仍要求配对与鉴权，但不提供加密或 TLS 服务器认证，同一网络中的其他人可能读取屏幕内容、操作和凭据。原生客户端继续使用现有 TLS 公钥绑定流程。
 
-Host 限制为连接接收端 IP 和手机上显式配置的公网地址；Origin 若存在，必须与请求协议、Host 和端口同源。拒绝 same-site 与 cross-site API 请求，不提供 CORS 放行。仅 `GET /` 允许 Android 启动浏览器的跨站导航，不放行配对、脚本或 API。任意解析到手机的域名不会获准。支持 IPv4 和 IPv6 字面地址。公网地址展示不负责配置 DNS、路由、端口映射、反向代理或公共 CA 证书。
+访问地址白名单为空时，Host 仅允许连接接收端 IP 和服务端口，拒绝任意域名。填写白名单后替换默认规则，只允许精确匹配的 IP／域名和服务端口；手机 IP 和回环地址也需列入才能继续使用。每次请求均检查白名单，首页、身份、配对、API 和 MCP 均受限制。白名单检查目标 Host，不检查客户端来源 IP，也不替代鉴权或充当来源 IP 防火墙。Origin 若存在，必须与请求协议、Host 和端口同源。拒绝 same-site 与 cross-site API 请求，不提供 CORS 放行。仅 `GET /` 允许 Android 启动浏览器的跨站导航，不放行配对、脚本或 API。未列入白名单的域名即使解析到手机也不会获准，允许某域名不会自动放行其子域名。支持 IPv4 和 IPv6 字面地址。白名单不负责配置 DNS、路由、端口映射、反向代理或公共 CA 证书。
 
-网页 JavaScript 无法替浏览器认证不可信 HTTPS 证书。浏览器六位授权码不是原生八位 SAS 协议，不能替代证书信任。HTTPS 浏览器访问需独立建立证书信任，不应盲目跳过警告。App 的本机入口始终为 `http://127.0.0.1:8443/`。
+网页 JavaScript 无法替浏览器认证不可信 HTTPS 证书。浏览器六位授权码不是原生八位 SAS 协议，不能替代证书信任。HTTPS 浏览器访问需独立建立证书信任，不应盲目跳过警告。App 的本机入口为 `http://127.0.0.1:8443/`；非空白名单未包含 `127.0.0.1` 时按钮禁用，可在设置中加入该地址或清空列表恢复。
 
 验证包括 Kotlin/Python 共同测试向量、真实回环 TLS、公钥替换时发送前拒绝、本地确认门槛、旧凭证迁移，以及 Android Keystore TLS、配对、API、MCP 仪器测试。这些是回归证据，不代表独立密码学审计。
