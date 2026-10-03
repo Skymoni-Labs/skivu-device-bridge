@@ -106,7 +106,7 @@ class MixedTransportInstrumentedTest {
         try {
             server.start(port)
             for (secure in listOf(false, true)) {
-                for (address in listOf("127.0.0.1", "::1")) {
+                for (address in if (secure) listOf("127.0.0.1", "::1") else listOf("127.0.0.1")) {
                     assertEquals(200, request(identity, address, "/", secure).status)
                     assertEquals(200, request(identity, address, "/app.js", secure).status)
                     assertEquals(401, request(identity, address, "/api/tools", secure).status)
@@ -120,6 +120,16 @@ class MixedTransportInstrumentedTest {
                     host = "127.0.0.1:$port", extra = "X-Forwarded-For: 127.0.0.1\r\nForwarded: for=127.0.0.1\r\n").status)
             assertTrue(identity.pairing.pending().isEmpty())
             assertEquals(200, request(identity, remote, "/identity", secure = true).status)
+            allowedHosts.set(listOf(remote, "phone.example", "127.0.0.1", "127.0.0.2", "::1"))
+            for (address in listOf(remote, "127.0.0.2", "::1")) {
+                assertEquals(403, request(identity, address, "/identity").status)
+                assertEquals(200, request(identity, address, "/identity", secure = true).status)
+            }
+            assertEquals(200, request(identity, "127.0.0.1", "/identity").status)
+            assertEquals(403, request(identity, "127.0.0.1", "/identity", host = "phone.example:$port").status)
+            assertEquals(200, request(identity, "127.0.0.1", "/identity", secure = true, host = "phone.example:$port").status)
+            assertEquals(200, request(identity, remote, "/identity", secure = true, host = "phone.example:$port").status)
+            allowedHosts.set(emptyList())
             server.setAllowInsecureHttp(true)
             assertEquals(403, request(identity, remote, "/identity", host = "phone.example:$port").status)
             allowedHosts.set(listOf("phone.example", "other.example"))

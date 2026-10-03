@@ -72,7 +72,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             val secure = ConnectionProtocol.isTls(socket)
             val checkTransport = transportPolicy.register(socket, secure)
             if (checkTransport == null) {
-                write(socket, Response(403, json("error" to "Non-loopback HTTP connections are disabled")))
+                write(socket, Response(403, json("error" to HttpTransportPolicy.HTTP_DISABLED)))
                 return
             }
             if (secure) {
@@ -90,9 +90,9 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             android.util.Log.w("PhoneUseHttp", "Protocol detection failed: ${e.javaClass.simpleName}")
         }
     }
-    private fun handle(socket: Socket, secure: Boolean, checkTransport: () -> Unit) {
+    private fun handle(socket: Socket, secure: Boolean, checkConnection: () -> Unit) {
         try {
-            checkTransport()
+            checkConnection()
             val input = BufferedInputStream(socket.inputStream)
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(12)
             fun line(): String {
@@ -120,6 +120,11 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
                 val key = header.substring(0, index).lowercase()
                 if (headers.put(key, header.substring(index + 1).trim()) != null) throw HttpError(400, "Duplicate header")
             }
+            // A whitelisted domain must not inherit the local console's HTTP exception.
+            val checkRequestTransport = transportPolicy.register(socket, secure,
+                localConsoleHost = headers["host"] == "127.0.0.1:${socket.localPort}")
+                ?: throw HttpError(403, HttpTransportPolicy.HTTP_DISABLED)
+            val checkTransport = { checkConnection(); checkRequestTransport() }
             val path = request[1]
             // Android ACTION_VIEW launches can mark the public landing page as cross-site.
             // Only GET / is public navigation; scripts, pairing and API still require same origin.

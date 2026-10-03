@@ -8,26 +8,45 @@ import java.net.InetAddress
 import java.net.Socket
 
 class HttpTransportPolicyTest {
-    private class Peer(address: String) : Socket() {
+    private class Peer(address: String, localAddress: String = "127.0.0.1") : Socket() {
         private val peer = InetAddress.getByName(address)
+        private val local = InetAddress.getByName(localAddress)
         var closedByPolicy = false
         override fun getInetAddress() = peer
+        override fun getLocalAddress() = local
         override fun close() { closedByPolicy = true }
     }
 
-    @Test fun onlyActualLoopbackPeersBypassTheSwitch() {
+    @Test fun onlyLocal127001ConnectionsBypassTheSwitch() {
         val policy = HttpTransportPolicy()
-        for (ip in listOf("127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1")) {
+        for (ip in listOf("127.0.0.1", "::ffff:127.0.0.1")) {
             val socket = Peer(ip)
             assertNotNull(policy.register(socket, false))
         }
-        for (ip in listOf("192.168.1.2", "203.0.113.7", "2001:db8::2")) {
+        for (ip in listOf("127.0.0.2", "::1", "192.168.1.2", "203.0.113.7", "2001:db8::2")) {
             assertNull(policy.register(Peer(ip), false))
             assertNotNull(policy.register(Peer(ip), true))
         }
+        assertNull(policy.register(Peer("127.0.0.1", "127.0.0.2"), false))
+        assertNull(policy.register(Peer("127.0.0.1", "192.168.1.2"), false))
     }
 
-    @Test fun disablingClosesOnlyRemoteHttpAndPermanentlyInvalidatesItsWork() {
+    @Test fun aDifferentRequestedHostNeedsTheSwitchEvenOnALocalConnection() {
+        val policy = HttpTransportPolicy()
+        val socket = Peer("127.0.0.1")
+        assertNotNull(policy.register(socket, false))
+        assertNull(policy.register(socket, false, localConsoleHost = false))
+        assertNotNull(policy.register(socket, true, localConsoleHost = false))
+        policy.update(true)
+        val check = policy.register(socket, false, localConsoleHost = false)!!
+        check()
+        policy.update(false)
+        assertTrue(socket.closedByPolicy)
+        policy.update(true)
+        assertThrows(DeviceError::class.java) { check() }
+    }
+
+    @Test fun disablingClosesOnlySwitchDependentHttpAndPermanentlyInvalidatesItsWork() {
         val policy = HttpTransportPolicy(true)
         val remote = Peer("192.168.1.2")
         val tls = Peer("192.168.1.2")

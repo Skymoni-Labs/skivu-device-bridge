@@ -4,7 +4,7 @@
 
 ## Access and identity
 
-The server listens on port `8443`, accepting **TLS 1.2/1.3 HTTPS and HTTP on the same socket**. Actual loopback peers do not need the insecure-HTTP setting; HTTP defaults to denied for all other peers, before pairing/authentication. The persistent insecure-HTTP setting enables non-loopback HTTP immediately; disabling it disconnects existing remote HTTP requests and invalidates their queued work. Both transports remain subject to the access address allowlist, normal pairing and authorization. Each installation retains its non-exportable Android Keystore key, certificate and SHA-256 SPKI pairing. Native clients continue to use pinned HTTPS without fallback.
+The server listens on port `8443`, accepting **TLS 1.2/1.3 HTTPS and HTTP on the same socket**. By default, HTTP requires both socket endpoints and the requested Host to use `127.0.0.1`; other HTTP, including IPv6 loopback and whitelisted domains, is rejected before pairing/authentication. The persistent insecure-HTTP setting enables these other HTTP connections immediately; disabling it disconnects their existing requests and invalidates queued work. Both transports remain subject to the independent access address allowlist, normal pairing and authorization. Each installation retains its non-exportable Android Keystore key, certificate and SHA-256 SPKI pairing. Native clients continue to use pinned HTTPS without fallback.
 
 ### Commit → reveal → compare on both sides → approve → claim
 

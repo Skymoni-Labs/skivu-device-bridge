@@ -92,7 +92,8 @@ internal fun SettingsScreen() {
                 allowHttp = it
             }).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(stringResource(R.string.allow_insecure_http), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(R.string.allow_insecure_http), Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
                 Switch(checked = allowHttp, onCheckedChange = null)
             }
             Text(stringResource(R.string.insecure_http_help), style = MaterialTheme.typography.bodyMedium,

@@ -90,12 +90,12 @@
         <item quantity="other">剩余 %1$d 秒</item>
     </plurals>
     <string name="allow_insecure_http">允许不安全的 HTTP 连接</string>
-    <string name="insecure_http_help">允许通过局域网或公网地址使用 HTTP。连接不会加密，屏幕内容、操作和凭据可能被同一网络中的其他人读取。</string>
+    <string name="insecure_http_help">开启后允许 HTTP，仍受访问地址白名单和配对授权限制。HTTP 不加密，屏幕内容、操作和凭据可能被窃听。建议保持关闭。</string>
     <string name="access_allowlist">访问地址白名单</string>
     <string name="access_allowlist_entries">允许的 IP 地址和域名</string>
     <string name="access_allowlist_hint">每行一个 IP 地址或域名，不含协议、端口、路径或通配符。</string>
     <string name="access_allowlist_invalid">请检查每一行：填写一个有效的 IP 地址或域名，不含协议、端口、路径或通配符。</string>
-    <string name="access_allowlist_help">留空时仅允许通过手机自身 IP 访问；保存地址后，仅允许通过列表中的地址访问。这里填写的是访问手机时使用的地址，不是连接者的来源 IP。如需本机 Web 控制台，请加入 127.0.0.1。仍需配对授权。</string>
+    <string name="access_allowlist_help">留空仅允许通过手机自身 IP 访问；填写后仅允许列表中的访问地址。加入白名单不会开启 HTTP，默认仍需 HTTPS，仅本机 127.0.0.1 例外。使用本机控制台时也需将 127.0.0.1 列入。</string>
     <string name="access_allowlist_active">当前仅允许白名单中的地址，网络连通和端口映射仍需另行配置。</string>
     <string name="local_console_blocked">白名单未允许本机 Web 控制台。请在设置中加入 127.0.0.1，或清空列表恢复默认 IP 访问。</string>
     <string name="save_allowlist">保存白名单</string>

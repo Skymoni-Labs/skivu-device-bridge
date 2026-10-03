@@ -8,7 +8,7 @@ class HttpTransportPolicy(allowInsecureHttp: Boolean = false) {
     private val lock = Any()
     private var enabled = allowInsecureHttp
     private var generation = 0L
-    private val remoteHttp = mutableSetOf<Socket>()
+    private val insecureHttp = mutableSetOf<Socket>()
 
     fun update(allow: Boolean) {
         val closing = synchronized(lock) {
@@ -16,26 +16,32 @@ class HttpTransportPolicy(allowInsecureHttp: Boolean = false) {
             enabled = allow
             if (allow) emptyList() else {
                 generation++
-                remoteHttp.toList().also { remoteHttp.clear() }
+                insecureHttp.toList().also { insecureHttp.clear() }
             }
         }
         closing.forEach { runCatching { it.close() } }
     }
 
-    /** The peer is the socket's actual source, never Host, Origin or forwarding headers. */
-    fun register(socket: Socket, secure: Boolean): (() -> Unit)? = synchronized(lock) {
-        if (secure || socket.inetAddress.isLoopbackAddress) return@synchronized {}
+    /** Check actual socket endpoints first, then call again after parsing the requested Host. */
+    fun register(socket: Socket, secure: Boolean, localConsoleHost: Boolean = true): (() -> Unit)? = synchronized(lock) {
+        val localConsole = socket.inetAddress.hostAddress == "127.0.0.1" &&
+            socket.localAddress.hostAddress == "127.0.0.1" && localConsoleHost
+        if (secure || localConsole) return@synchronized {}
         if (!enabled) return@synchronized null
-        remoteHttp.add(socket)
+        insecureHttp.add(socket)
         val admittedGeneration = generation
         val check: () -> Unit = {
             synchronized(lock) {
                 if (!enabled || generation != admittedGeneration)
-                    fail("TRANSPORT_DISABLED", "Non-loopback HTTP connections are disabled")
+                    fail("TRANSPORT_DISABLED", HTTP_DISABLED)
             }
         }
         check
     }
 
-    fun remove(socket: Socket) { synchronized(lock) { remoteHttp.remove(socket) } }
+    fun remove(socket: Socket) { synchronized(lock) { insecureHttp.remove(socket) } }
+
+    companion object {
+        const val HTTP_DISABLED = "HTTP is disabled except for local access through 127.0.0.1"
+    }
 }
