@@ -190,6 +190,8 @@ function resultStatus(value) {
     const progress = result.observation_purpose === 'after_rejection' && result.action_executed === false ? t('progress_recovery') : result.action_executed === true ? t('progress_observing') : t('progress_executing');
     return t('result_executing', { progress });
   }
+  if (result.error?.reason === 'launch_not_confirmed') return t('launch_not_confirmed');
+  if (result.error?.reason === 'launch_permission_denied') return t('launch_permission_denied');
   if (result.state === 'unknown') return t('result_unknown');
   const recovery = recoveryLabels[result.recovery?.category];
   const hint = recovery ? t('recovery_hint', { recovery }) : '';

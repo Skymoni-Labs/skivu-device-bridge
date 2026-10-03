@@ -13,6 +13,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
+import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
 import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
 import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
@@ -27,6 +28,7 @@ class PhoneUseService : Service() {
     private var starting = false
     private val settings by lazy { getSharedPreferences("service_state", MODE_PRIVATE) }
     private val connectionSettings by lazy { ConnectionSettings(this) }
+    private val launchGuidance by lazy { AppLaunchGuidance(this) }
     private val connectionListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == ConnectionSettings.ALLOW_HTTP) server?.setAllowInsecureHttp(connectionSettings.allowInsecureHttp)
     }
@@ -120,6 +122,7 @@ class PhoneUseService : Service() {
         return when {
             identities.pairing.pending().isNotEmpty() -> R.string.service_pairing_pending
             controller.gate.paused -> R.string.service_paused
+            launchGuidance.unconfirmedPackage != null -> R.string.launch_unconfirmed_notification
             lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> R.string.service_recent_request
             else -> R.string.service_available
         }

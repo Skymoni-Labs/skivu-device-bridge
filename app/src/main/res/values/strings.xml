@@ -10,6 +10,15 @@
     <string name="device_identity_help">The device ID stays with this installation. IP address changes do not affect pairing.</string>
     <string name="service_stopped">Service not started</string>
     <string name="keep_unlocked">Keep the phone awake and unlocked during use. Pause or stop from the notification at any time.</string>
+    <string name="background_launch_title">Background app launches</string>
+    <string name="background_launch_xiaomi_help">To open other apps while Phone Use is in the background, allow background pop-up windows in Other permissions. Permission names vary by system version. This permission must be managed in system settings; Phone Use cannot reliably read its status. Also allow any app-opening confirmation shown on the phone.</string>
+    <string name="background_launch_help">Check the phone for an app-opening confirmation. In system settings, check whether Phone Use is allowed to open apps from the background.</string>
+    <string name="launch_unconfirmed">Last launch was not confirmed: %1$s. The app may be slow to open, blocked by a dialog, or restricted by the system. Check the screen before trying again.</string>
+    <string name="launch_unconfirmed_notification">App launch not confirmed · Open Phone Use for help</string>
+    <string name="launch_unconfirmed_status">Service available · Last app launch not confirmed</string>
+    <string name="open_launch_settings">Open settings</string>
+    <string name="dismiss_launch_warning">Dismiss reminder</string>
+    <string name="launch_settings_unavailable">Could not open settings. Open Phone Use’s app details in system settings to check its permissions.</string>
     <string name="start_http_service">Start service</string>
     <string name="resume_control">Resume control</string>
     <string name="pause_control">Pause control</string>

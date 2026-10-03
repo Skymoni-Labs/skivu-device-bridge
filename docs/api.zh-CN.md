@@ -188,7 +188,9 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
-普通动作默认只执行一次并返回执行事实，不固定延时、不采集动作后树或截图；观察缺省是正常成功结果。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+动作只执行一次并返回执行事实，默认不采集动作后树或截图；观察缺省是正常成功结果。`launch_app` 额外检查无障碍活动窗口的包名，最多等待五秒确认目标应用进入前台；其他动作不增加隐式等待。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
+
+`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。手机端显示本地提醒与通知，小米／Redmi／POCO 首页另提供「其他权限」入口，打不开时回退应用详情。检查不读取厂商权限标志，也不将未确认直接等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
 
 动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
 
@@ -201,10 +203,10 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 }
 ```
 
-- executed：Android 接受节点/导航/Intent 操作，或报告手势完成。不会声称业务成功。
+- executed：Android 接受节点/导航操作、报告手势完成，或启动目标包已被观察到处于前台。不会声称业务成功。
 - failed：校验或系统明确拒绝，含 error.code/message。
 - cancelled：尚未执行的输入被取消或控制已失效。
-- unknown：手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
+- unknown：应用启动未确认、手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
 
 执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因通知暂停而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
 
@@ -212,7 +214,7 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 窗口信息只作按需诊断（`diagnostics:true` 下的 windows），不要求活动应用覆盖全屏，也不需要客户端先选择输入法窗口。版本和事件历史用于解释变化，不是整页必须不变的前置条件。
 
-去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。
+去重作用域为**当前服务进程的 client_id + request_id**，相同 ID 的参数和工具必须完全一致（对象键顺序忽略）。结果保留十分钟，最多 256 个 ID，并有约 800 万字符的结果缓存预算；预算满时拒绝新动作，不提前丢弃未到期的 ID。快照/截图/动作参数只在内存保存，服务停止或进程死亡后不恢复。应用不写操作日志或截图文件。仅为权限提醒在本机保存最近一次未确认启动的包名，启动确认成功或用户在本机关闭提醒后清除。
 
 若已执行动作的附带观察使结果超过剩余保留预算，该观察会替换为 `observation_status:"failed"`、`error.code:"CACHE_BUDGET_EXCEEDED"`、`omitted_for_retention:true`，保留原动作 state、action_executed 及原始错误。不能因此再次发送原动作。
 

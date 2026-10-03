@@ -7,6 +7,7 @@ import ai.nidhoggfgg.phoneuse.PhoneUseService
 import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.core.DeviceError
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
+import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
 import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -65,6 +66,7 @@ fun PhoneUseApp(
 private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () -> Unit, onOpenWebConsole: () -> Unit) {
     val context = LocalContext.current
     val identity = remember { DeviceIdentity(context.applicationContext) }
+    val launchGuidance = remember { AppLaunchGuidance(context) }
     var tick by remember { mutableIntStateOf(0) }
     var editingName by rememberSaveable { mutableStateOf(false) }
     DisposableEffect(Unit) {
@@ -79,7 +81,9 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
     @Suppress("UNUSED_VARIABLE") val refresh = tick
     val service = PhoneUseService.current
     val paused = service?.controller?.gate?.paused == true
-    val status = service?.stateMessage() ?: R.string.service_stopped
+    val status = (service?.stateMessage() ?: R.string.service_stopped).let {
+        if (it == R.string.launch_unconfirmed_notification) R.string.launch_unconfirmed_status else it
+    }
     val serviceError = PhoneUseService.lastError
     val accessibility = PhoneAccessibilityService.current != null
     Column(
@@ -121,6 +125,9 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
             Text(stringResource(R.string.keep_unlocked), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (AppLaunchGuidance.isXiaomi || launchGuidance.unconfirmedPackage != null) {
+            AppLaunchCard(launchGuidance.unconfirmedPackage, onDismiss = { launchGuidance.clearWarning(); tick++ })
+        }
         if (service != null) {
             PairingRequestsCard(service, tick, onRefresh = { tick++ })
             ConnectionCard(tick, onOpenWebConsole)
@@ -132,6 +139,28 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
         onDismiss = { editingName = false },
         onSave = { identity.rename(it); tick++; editingName = false }
     )
+}
+
+@Composable
+private fun AppLaunchCard(unconfirmedPackage: String?, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    var settingsUnavailable by remember { mutableStateOf(false) }
+    SectionCard {
+        Text(stringResource(R.string.background_launch_title), style = MaterialTheme.typography.titleMedium)
+        if (unconfirmedPackage != null) {
+            Text(stringResource(R.string.launch_unconfirmed, unconfirmedPackage), color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodyMedium)
+        }
+        Text(stringResource(if (AppLaunchGuidance.isXiaomi) R.string.background_launch_xiaomi_help else R.string.background_launch_help),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { settingsUnavailable = !AppLaunchGuidance.openSettings(context) }) {
+                Text(stringResource(R.string.open_launch_settings))
+            }
+            if (unconfirmedPackage != null) TextButton(onClick = onDismiss) { Text(stringResource(R.string.dismiss_launch_warning)) }
+        }
+        if (settingsUnavailable) Text(stringResource(R.string.launch_settings_unavailable), color = MaterialTheme.colorScheme.error)
+    }
 }
 
 @Composable

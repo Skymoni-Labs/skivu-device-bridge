@@ -122,7 +122,7 @@ object ToolCatalog {
         )
         if (action) common.forEach { (key, value) -> properties.put(key, value) }
         fields.forEach { (key, value) -> properties.put(key, value) }
-        return json("name" to name, "description" to if (action) "$description. Executes once and returns execution only by default; AI chooses subsequent waits and observations. Android acceptance is not business success." else description, "inputSchema" to json("type" to "object",
+        return json("name" to name, "description" to if (action) "$description. Executes once and returns execution only by default; AI chooses subsequent waits and observations. Execution is not business success." else description, "inputSchema" to json("type" to "object",
             "properties" to properties, "required" to JSONArray((if (action) listOf("request_id") else emptyList()) + required),
             "additionalProperties" to false))
     }
@@ -142,6 +142,6 @@ object ToolCatalog {
             "region" to json("type" to "object", "properties" to json("left" to integer("Left pixel"), "top" to integer("Top pixel"), "right" to integer("Right pixel"), "bottom" to integer("Bottom pixel")), "required" to JSONArray(listOf("left", "top", "right", "bottom")), "additionalProperties" to false)), listOf("observation_id", "direction"), true),
         tool("input_text", "Replace all text or insert at the reported selection. Revalidates the specified editor without implicit focus or readback; returns text_verified=false, so explicitly observe to check the written text. Insert requires readable text and replaces any selected range", mapOf("element_id" to string("Editable element"), "text" to string("Text, may be empty; max 10000 characters"), "mode" to string("replace or insert")), listOf("observation_id", "element_id", "text", "mode"), true),
         tool("back", "Android Back", action = true), tool("home", "Android Home", action = true), tool("recents", "Android Recents", action = true),
-        tool("launch_app", "Launch a discoverable package with an Android Intent", mapOf("package_name" to string("Android package")), listOf("package_name"), true)
+        tool("launch_app", "Launch a discoverable package once with an Android Intent, then confirm its foreground package for up to 5 seconds. Unconfirmed launches return RESULT_UNKNOWN with permission guidance; observe before retrying", mapOf("package_name" to string("Android package")), listOf("package_name"), true)
     ))
 }

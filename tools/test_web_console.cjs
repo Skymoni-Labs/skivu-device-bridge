@@ -169,7 +169,9 @@ const server = http.createServer(async (req, res) => {
       [{ state: 'executed', action_executed: true, observation: { condition: { status: 'unknown' }, last_observation: { condition: { status: 'satisfied' } } } }, /当前条件未知/],
       [{ state: 'executed', action_executed: true, observation: { observation_status: 'complete', screenshot: { available: false } } }, /截图不可用/],
       [{ state: 'executed', action_executed: true, observation: { observation_status: 'failed', error: { code: 'OBSERVATION_INCONSISTENT' } } }, /观察采集失败/],
-      [{ state: 'unknown', action_executed: null }, /动作结果未知.*请勿重放/]
+      [{ state: 'unknown', action_executed: null }, /动作结果未知.*请勿重放/],
+      [{ state: 'unknown', action_executed: null, error: { code: 'RESULT_UNKNOWN', reason: 'launch_not_confirmed' } }, /5 秒内未确认.*后台弹出界面.*启动请求已经发出/],
+      [{ state: 'failed', action_executed: false, error: { code: 'ACTION_REJECTED', reason: 'launch_permission_denied' } }, /系统拒绝.*后台启动应用权限/]
     ];
     for (const [result, expected] of cases) {
       const before = calls.length;

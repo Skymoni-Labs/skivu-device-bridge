@@ -40,6 +40,8 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See 
 2. Start the service and allow notifications. On Android 17+, grant local network permission when requested.
 3. Keep the phone awake and unlocked for input. Connect your client machine to a network that can reach the IPv4 address shown in the app.
 
+On Xiaomi/Redmi/POCO, use **Background app launches** on the dashboard to open system permissions and allow background pop-up windows. This vendor permission must be enabled manually; the app does not claim to know its grant status.
+
 ### 3. Pair a client
 
 Connect with the Python client or MCP bridge using `https://PHONE_IPV4:8443`. Compare all eight digits with the phone, approve there, and confirm the match in the client. No certificate installation or long fingerprint copy is needed. Direct browser access requires separate certificate trust.
@@ -89,7 +91,7 @@ Replace `DEVICE_ID` with the ID returned by pairing. Credentials are managed in 
 
 ## Execution model and limitations
 
-Actions execute once by default. Waiting, observing, and verifying the result are explicit client decisions. Every input action needs a unique `request_id`; after a network error, query the original request instead of replaying it under a new ID.
+Actions execute once. `launch_app` checks for the target foreground package for up to five seconds; an unconfirmed launch returns an unknown result with troubleshooting guidance. Other waits, observations, and business-result verification are explicit client decisions. Every input action needs a unique `request_id`; after a network error, query the original request instead of replaying it under a new ID.
 
 An `executed` result means Android accepted the action or completed the gesture—it does not prove the app task succeeded. Trees and screenshots are collected separately, and protected windows, custom controls, keyboards, and vendor background policies can limit what is available. Physical-device coverage remains incomplete; see the [validation guide](docs/validation.md).
 

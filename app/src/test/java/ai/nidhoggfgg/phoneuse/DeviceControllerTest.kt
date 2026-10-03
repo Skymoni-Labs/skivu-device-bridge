@@ -47,6 +47,25 @@ class DeviceControllerTest {
     }
     private fun action(id: String) = json("request_id" to id)
 
+    @Test fun unconfirmedLaunchIsRetainedAsUnknownAndNeverReplayed() {
+        val backend = Backend().apply {
+            failure = DeviceError("RESULT_UNKNOWN", "Launch not confirmed", json(
+                "reason" to "launch_not_confirmed", "package_name" to "target", "action_executed" to JSONObject.NULL))
+        }
+        val controller = DeviceController(backend, { 100L }, { true })
+        try {
+            val args = json("request_id" to "launch-once", "package_name" to "target", "observe_after" to true)
+            val result = controller.call("a", "launch_app", args)
+            assertEquals("unknown", result.getString("state"))
+            assertTrue(result.isNull("action_executed"))
+            assertEquals("launch_not_confirmed", result.getJSONObject("error").getString("reason"))
+            assertEquals("reconcile_result", result.getJSONObject("recovery").getString("category"))
+            assertEquals(result.toString(), controller.call("a", "launch_app", args).toString())
+            assertEquals(1, backend.calls.get())
+            assertTrue(backend.observedOptions.isEmpty())
+        } finally { controller.stop() }
+    }
+
     @Test fun authorizedClientsCanActWithoutAcquiringControl() {
         var now = 100L
         val controller = DeviceController(Backend(), { now }, { true })

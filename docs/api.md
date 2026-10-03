@@ -183,7 +183,9 @@ Optional `acquire_device` reserves a device for up to five minutes for testing. 
 
 Credentials remain valid until revoked. Pause blocks new operations and cancels queued input; resume permits new actions without replay. Process/service restart does not replay requests and still requires authorization.
 
-Default actions execute once and return execution facts, without fixed delays or post-action trees/screenshots. Missing observation is a normal success result. `observe_after:true` explicitly attaches observation; waiting must also be requested in `observation_options`. The client decides the sequence and may reuse a valid reference; observing after every action is not mandatory.
+Actions execute once and return execution facts, without post-action trees/screenshots by default. `launch_app` additionally checks the active accessibility root package for up to five seconds; other actions do not add implicit waits. Missing observation is a normal success result. `observe_after:true` explicitly attaches observation; waiting must also be requested in `observation_options`. The client decides the sequence and may reuse a valid reference; observing after every action is not mandatory.
+
+`launch_app` returns `execution.confirmation:"foreground_observed"` only after seeing the target package. A timeout returns `state:"unknown"`, `error.code:"RESULT_UNKNOWN"`, `error.reason:"launch_not_confirmed"`, and `action_executed:null`. The request was dispatched, so do not automatically replay it. Check the phone for a slow launch, a confirmation dialog, or background-launch restrictions. Phone Use shows a local reminder and a notification; Xiaomi/Redmi/POCO also have a dashboard shortcut to Other permissions, with app-details fallback. These checks do not read a vendor permission flag or prove a permission is missing. Interruption after dispatch also stays unknown (`launch_confirmation_interrupted`); explicit Android permission denial returns `ACTION_REJECTED` (`launch_permission_denied`). No full tree or screenshot is collected for launch confirmation.
 
 Actions wait synchronously for up to 15 seconds, then return `accepted` (queued) or `executing`. Continue querying `get_status`; neither means success. Executed input still waiting on observation reports `state:"executing"`, `action_executed:true`, `observation_status:"observing"` at the top level and in `get_status.request`. `observation_purpose` distinguishes after_action / after_rejection. These observation fields are omitted if none was requested. `accepted` with `action_executed:false` means not executed yet, not a terminal rejection.
 
@@ -198,10 +200,10 @@ Actions wait synchronously for up to 15 seconds, then return `accepted` (queued)
 
 Terminal states:
 
-- `executed`: Android accepted a node/navigation/Intent action or reported gesture completion; business success is not claimed.
+- `executed`: Android accepted a node/navigation action, reported gesture completion, or the requested launch package was observed in the foreground; business success is not claimed.
 - `failed`: validation or explicit system rejection, with `error.code/message`.
 - `cancelled`: unexecuted input was cancelled or authorization/control became invalid.
-- `unknown`: gesture callback timeout, partial cancellation, or an exception leaves execution uncertain. Re-observe; do not automatically retry.
+- `unknown`: unconfirmed app launch, gesture callback timeout, partial cancellation, or an exception leaves execution uncertain. Re-observe; do not automatically retry.
 
 Post-action observation failure/timeout preserves `executed`; observation reports its own state/error. An unmet condition must block steps depending on it. Pause cannot retroactively revoke injected input. `cancel` reports `in_flight_may_complete`; immediate gesture termination is not guaranteed.
 
@@ -209,7 +211,7 @@ Post-action observation failure/timeout preserves `executed`; observation report
 
 Window inventory is optional diagnostics (`diagnostics:true`), not a requirement that the app fill the screen or that clients select the keyboard window. Versions and event history explain changes without imposing whole-page stability.
 
-Deduplication scope is **client_id + request_id in the current service process**. Tool and arguments must match exactly, ignoring object-key order. Results live for ten minutes, at most 256 IDs, with an approximately eight-million-character cache budget. A full cache rejects new actions instead of dropping unexpired IDs. Snapshots, images, and action arguments are memory-only and do not survive service stop/process death. The app writes no action log or screenshot files.
+Deduplication scope is **client_id + request_id in the current service process**. Tool and arguments must match exactly, ignoring object-key order. Results live for ten minutes, at most 256 IDs, with an approximately eight-million-character cache budget. A full cache rejects new actions instead of dropping unexpired IDs. Snapshots, images, and action arguments are memory-only and do not survive service stop/process death. The app writes no action log or screenshot files. Only the last unconfirmed launch package is retained locally for the permission reminder; a confirmed launch or local dismissal clears it.
 
 If attached observation exceeds retention budget after execution, it becomes `observation_status:"failed"`, `error.code:"CACHE_BUDGET_EXCEEDED"`, `omitted_for_retention:true`; original action state, execution fact, and error remain. Never replay input because of this.
 

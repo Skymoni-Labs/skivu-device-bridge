@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.view.WindowManager
 import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
+import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
@@ -110,6 +111,41 @@ class DashboardSettingsTest {
         assertEquals("工作手机", DeviceIdentity(context).name)
         compose.onNodeWithText("Details").performClick()
         compose.onNodeWithText("Device ID: $originalId").assertIsDisplayed()
+    }
+
+    @Test fun unconfirmedLaunchReminderSurvivesRecreationAndCanBeDismissedLocally() {
+        val guidance = AppLaunchGuidance(context)
+        val original = guidance.unconfirmedPackage
+        try {
+            compose.onNodeWithText("Start service").performClick()
+            compose.waitUntil(10_000) { PhoneUseService.current != null }
+            guidance.recordUnconfirmed("com.example.target")
+            compose.waitUntil(5_000) {
+                compose.onAllNodesWithText("com.example.target", substring = true).fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithText("Last launch was not confirmed:", substring = true).performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Open settings").assertIsDisplayed()
+            screenshot("launch-reminder-en")
+            compose.waitUntil(5_000) { PhoneUseService.current?.stateMessage() == R.string.launch_unconfirmed_notification }
+            compose.waitUntil(5_000) {
+                context.getSystemService(NotificationManager::class.java).activeNotifications.any {
+                    it.notification.extras.getString(android.app.Notification.EXTRA_TEXT) ==
+                        context.getString(R.string.launch_unconfirmed_notification)
+                }
+            }
+            scenario.recreate()
+            compose.onNodeWithText("Last launch was not confirmed:", substring = true).performScrollTo().assertIsDisplayed()
+            instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+            waitForText("后台启动应用")
+            compose.onNodeWithText("上次未确认打开：", substring = true).performScrollTo().assertIsDisplayed()
+            screenshot("launch-reminder-zh")
+            compose.onNodeWithText("关闭提醒").performScrollTo().performClick()
+            compose.waitUntil(5_000) { guidance.unconfirmedPackage == null }
+            compose.onNodeWithText("上次未确认打开：", substring = true).assertDoesNotExist()
+            compose.waitUntil(5_000) { PhoneUseService.current?.stateMessage() != R.string.launch_unconfirmed_notification }
+        } finally {
+            if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
+        }
     }
 
     @Test fun languageSwitchKeepsSettingsOpenAndPreservesRunningServiceAndPairing() {
