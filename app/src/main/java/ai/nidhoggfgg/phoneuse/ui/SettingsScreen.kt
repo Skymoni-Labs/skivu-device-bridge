@@ -111,5 +111,6 @@ internal fun SettingsScreen() {
                 }.onFailure { addressError = true }
             }) { Text(stringResource(R.string.save_address)) }
         }
+        AppLaunchCard(alwaysShow = true)
     }
 }

@@ -125,9 +125,7 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
             Text(stringResource(R.string.keep_unlocked), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (AppLaunchGuidance.isXiaomi || launchGuidance.unconfirmedPackage != null) {
-            AppLaunchCard(launchGuidance.unconfirmedPackage, onDismiss = { launchGuidance.clearWarning(); tick++ })
-        }
+        AppLaunchCard(launchGuidance.unconfirmedPackage, onDismiss = { launchGuidance.clearWarning(); tick++ })
         if (service != null) {
             PairingRequestsCard(service, tick, onRefresh = { tick++ })
             ConnectionCard(tick, onOpenWebConsole)
@@ -139,28 +137,6 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
         onDismiss = { editingName = false },
         onSave = { identity.rename(it); tick++; editingName = false }
     )
-}
-
-@Composable
-private fun AppLaunchCard(unconfirmedPackage: String?, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    var settingsUnavailable by remember { mutableStateOf(false) }
-    SectionCard {
-        Text(stringResource(R.string.background_launch_title), style = MaterialTheme.typography.titleMedium)
-        if (unconfirmedPackage != null) {
-            Text(stringResource(R.string.launch_unconfirmed, unconfirmedPackage), color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodyMedium)
-        }
-        Text(stringResource(if (AppLaunchGuidance.isXiaomi) R.string.background_launch_xiaomi_help else R.string.background_launch_help),
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { settingsUnavailable = !AppLaunchGuidance.openSettings(context) }) {
-                Text(stringResource(R.string.open_launch_settings))
-            }
-            if (unconfirmedPackage != null) TextButton(onClick = onDismiss) { Text(stringResource(R.string.dismiss_launch_warning)) }
-        }
-        if (settingsUnavailable) Text(stringResource(R.string.launch_settings_unavailable), color = MaterialTheme.colorScheme.error)
-    }
 }
 
 @Composable

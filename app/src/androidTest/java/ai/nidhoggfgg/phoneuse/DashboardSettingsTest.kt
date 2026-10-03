@@ -9,12 +9,16 @@ import android.os.ParcelFileDescriptor
 import android.view.WindowManager
 import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
 import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
+import ai.nidhoggfgg.phoneuse.device.AppLaunchNotifications
+import ai.nidhoggfgg.phoneuse.device.BackgroundLaunchPermission
+import ai.nidhoggfgg.phoneuse.device.BackgroundLaunchPermissionChecker
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.core.app.LocaleManagerCompat
 import androidx.core.os.LocaleListCompat
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -141,8 +145,92 @@ class DashboardSettingsTest {
             screenshot("launch-reminder-zh")
             compose.onNodeWithText("关闭提醒").performScrollTo().performClick()
             compose.waitUntil(5_000) { guidance.unconfirmedPackage == null }
+            compose.waitUntil(5_000) {
+                context.getSystemService(NotificationManager::class.java).activeNotifications.none { it.id == AppLaunchNotifications.ID }
+            }
             compose.onNodeWithText("上次未确认打开：", substring = true).assertDoesNotExist()
             compose.waitUntil(5_000) { PhoneUseService.current?.stateMessage() != R.string.launch_unconfirmed_notification }
+        } finally {
+            if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
+        }
+    }
+
+    @Test fun backgroundLaunchFailurePostsAnIndependentNotificationAndCoalescesRetries() {
+        val guidance = AppLaunchGuidance(context)
+        val original = guidance.unconfirmedPackage
+        val manager = context.getSystemService(NotificationManager::class.java)
+        try {
+            guidance.clearWarning()
+            // No control service or visible activity is needed to deliver the reminder.
+            assertNull(PhoneUseService.current)
+            scenario.moveToState(Lifecycle.State.CREATED)
+            guidance.recordUnconfirmed("com.example.first")
+            compose.waitUntil(5_000) { manager.activeNotifications.any { it.id == AppLaunchNotifications.ID } }
+            val first = manager.activeNotifications.single { it.id == AppLaunchNotifications.ID }.notification
+            assertEquals(AppLaunchNotifications.CHANNEL, first.channelId)
+            assertEquals(NotificationManager.IMPORTANCE_DEFAULT, manager.getNotificationChannel(first.channelId).importance)
+            assertNotNull(first.contentIntent)
+            assertTrue(first.flags and android.app.Notification.FLAG_AUTO_CANCEL != 0)
+            assertTrue(first.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
+            assertEquals(0, first.flags and android.app.Notification.FLAG_ONGOING_EVENT)
+            assertEquals(context.getString(R.string.launch_notification_detail, "com.example.first"),
+                first.extras.getString(android.app.Notification.EXTRA_TEXT))
+
+            guidance.recordUnconfirmed("com.example.second")
+            compose.waitUntil(5_000) {
+                manager.activeNotifications.singleOrNull { it.id == AppLaunchNotifications.ID }?.notification
+                    ?.extras?.getString(android.app.Notification.EXTRA_TEXT)
+                    ?.contains("com.example.second") == true
+            }
+            assertEquals(1, manager.activeNotifications.count { it.notification.channelId == AppLaunchNotifications.CHANNEL })
+            // A confirmed launch uses this same clear path; the service notification is unaffected.
+            guidance.clearWarning()
+            compose.waitUntil(5_000) { manager.activeNotifications.none { it.id == AppLaunchNotifications.ID } }
+        } finally {
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
+        }
+    }
+
+    @Test fun launchNotificationUsesChineseAndRemainsVisibleWhileControlIsPaused() {
+        val guidance = AppLaunchGuidance(context)
+        val original = guidance.unconfirmedPackage
+        val manager = context.getSystemService(NotificationManager::class.java)
+        try {
+            compose.onNodeWithText("Start service").performClick()
+            compose.waitUntil(10_000) { PhoneUseService.current != null }
+            PhoneUseService.current!!.setPaused(true)
+            instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+            waitForText("本机")
+            guidance.recordUnconfirmed("com.example.target")
+            compose.waitUntil(5_000) {
+                manager.activeNotifications.any {
+                    it.id == AppLaunchNotifications.ID && it.notification.extras.getString(android.app.Notification.EXTRA_TITLE) ==
+                        "Phone Use：请检查应用启动"
+                }
+            }
+            assertEquals(R.string.service_paused, PhoneUseService.current!!.stateMessage())
+            guidance.clearWarning()
+            compose.waitUntil(5_000) { manager.activeNotifications.none { it.id == AppLaunchNotifications.ID } }
+            assertTrue(manager.activeNotifications.any { it.notification.channelId == PhoneUseService.CHANNEL })
+        } finally {
+            if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
+        }
+    }
+
+    @Test fun backgroundLaunchSettingsRemainAvailableWithoutADashboardReminder() {
+        val guidance = AppLaunchGuidance(context)
+        val original = guidance.unconfirmedPackage
+        try {
+            guidance.clearWarning()
+            scenario.recreate()
+            if (BackgroundLaunchPermissionChecker(context).read() != BackgroundLaunchPermission.DENIED) {
+                compose.onNodeWithText("Background app launches").assertDoesNotExist()
+            }
+            compose.onNodeWithContentDescription("Settings").performClick()
+            compose.onNodeWithText("Background app launches").performScrollTo().assertIsDisplayed()
+            compose.onNodeWithText("Open settings").performScrollTo().assertIsDisplayed()
+            screenshot("background-launch-settings-en")
         } finally {
             if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
         }

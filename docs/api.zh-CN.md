@@ -190,7 +190,7 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 动作只执行一次并返回执行事实，默认不采集动作后树或截图；观察缺省是正常成功结果。`launch_app` 额外检查无障碍活动窗口的包名，最多等待五秒确认目标应用进入前台；其他动作不增加隐式等待。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
 
-`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。手机端显示本地提醒与通知，小米／Redmi／POCO 首页另提供「其他权限」入口，打不开时回退应用详情。检查不读取厂商权限标志，也不将未确认直接等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
+`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。所有厂商均显示本地提醒，并另发一条应用启动通知，不受静音服务通知及其暂停／配对状态遮挡。点击通知打开首页；重复失败合并为一条，通知仍在时不反复响铃。后续启动确认成功或在 App 内关闭提醒时清除通知。通知是否送达取决于系统通知权限与渠道设置，通知被禁用不会改变原始启动结果。首页另在恢复显示时尝试读取小米／Redmi／POCO「后台弹出界面」权限，仅在未允许或上次启动未确认时显示指引；不支持检测时保持状态未知，不常驻提醒。设置页始终保留「其他权限」入口，打不开时回退应用详情。权限标志不能证明启动成功，启动未确认也不等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
 
 动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
 

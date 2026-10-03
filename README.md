@@ -40,7 +40,7 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See 
 2. Start the service and allow notifications. On Android 17+, grant local network permission when requested.
 3. Keep the phone awake and unlocked for input. Connect your client machine to a network that can reach the IPv4 address shown in the app.
 
-On Xiaomi/Redmi/POCO, use **Background app launches** on the dashboard to open system permissions and allow background pop-up windows. This vendor permission must be enabled manually; the app does not claim to know its grant status.
+On Xiaomi/Redmi/POCO, Phone Use checks the background pop-up permission when the screen resumes. The dashboard shows **Background app launches** when the permission is denied or a launch was not confirmed. If the firmware does not support checking, the dashboard only shows a reminder after an unconfirmed launch. **Settings → Background app launches** always provides a manual entry to system permissions; permission changes must be made there. On every brand, a denied or unconfirmed launch also posts a separate notification that opens Phone Use. Repeated failures update one notification; a confirmed launch or dismissing the in-app reminder clears it.
 
 ### 3. Pair a client
 

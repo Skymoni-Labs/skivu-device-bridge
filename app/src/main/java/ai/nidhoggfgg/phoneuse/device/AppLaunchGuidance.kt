@@ -9,11 +9,18 @@ import android.provider.Settings
 
 /** OEM background-launch permissions have no portable Android runtime-permission API. */
 internal class AppLaunchGuidance(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences("app_launch_guidance", Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences("app_launch_guidance", Context.MODE_PRIVATE)
     val unconfirmedPackage: String? get() = preferences.getString("unconfirmed_package", null)
 
-    fun recordUnconfirmed(packageName: String) { preferences.edit().putString("unconfirmed_package", packageName).apply() }
-    fun clearWarning() { preferences.edit().remove("unconfirmed_package").apply() }
+    fun recordUnconfirmed(packageName: String) {
+        preferences.edit().putString("unconfirmed_package", packageName).apply()
+        AppLaunchNotifications.show(appContext, packageName)
+    }
+    fun clearWarning() {
+        preferences.edit().remove("unconfirmed_package").apply()
+        AppLaunchNotifications.clear(appContext)
+    }
 
     companion object {
         val isXiaomi: Boolean get() = Build.MANUFACTURER.equals("xiaomi", true) ||
