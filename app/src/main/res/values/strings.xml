@@ -74,6 +74,8 @@
     <string name="enable">Enable</string>
     <string name="manage">Manage</string>
     <string name="connection_details">Connection details</string>
+    <string name="show_ipv6_addresses">Show IPv6 addresses</string>
+    <string name="hide_ipv6_addresses">Hide IPv6 addresses</string>
     <string name="no_network_address">Connect to Wi-Fi to show a network address. The local console is still available.</string>
     <string name="unpair_failed">Could not unpair this client. Please try again.</string>
     <string name="language">Language</string>

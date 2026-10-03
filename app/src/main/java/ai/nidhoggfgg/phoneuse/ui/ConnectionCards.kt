@@ -31,6 +31,8 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         }.getOrDefault(emptyList())
     }
     val urls = ConnectionAddresses.urls(addresses, settings.publicHost, settings.allowInsecureHttp)
+    val (ipv6Urls, primaryUrls) = urls.partition { it.substringAfter("://").startsWith("[") }
+    var ipv6Open by rememberSaveable { mutableStateOf(false) }
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
     SectionCard {
         Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleMedium)
@@ -38,8 +40,18 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (urls.isEmpty()) {
             Text(stringResource(R.string.no_network_address), style = MaterialTheme.typography.bodyMedium)
-        } else SelectionContainer {
-            Text(urls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
+        } else {
+            if (primaryUrls.isNotEmpty()) SelectionContainer {
+                Text(primaryUrls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
+            }
+            if (ipv6Urls.isNotEmpty()) {
+                TextButton(onClick = { ipv6Open = !ipv6Open }) {
+                    Text(stringResource(if (ipv6Open) R.string.hide_ipv6_addresses else R.string.show_ipv6_addresses))
+                }
+                if (ipv6Open) SelectionContainer {
+                    Text(ipv6Urls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
+                }
+            }
         }
         if (settings.publicHost.isNotEmpty()) Text(stringResource(R.string.public_address_help),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

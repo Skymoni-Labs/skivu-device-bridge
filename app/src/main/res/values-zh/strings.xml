@@ -73,6 +73,8 @@
     <string name="enable">去开启</string>
     <string name="manage">管理</string>
     <string name="connection_details">连接详情</string>
+    <string name="show_ipv6_addresses">展开 IPv6 地址</string>
+    <string name="hide_ipv6_addresses">收起 IPv6 地址</string>
     <string name="no_network_address">连接 Wi-Fi 后显示网络地址，仍可打开本机控制台。</string>
     <string name="unpair_failed">无法解除客户端配对，请重试。</string>
     <string name="language">语言</string>
