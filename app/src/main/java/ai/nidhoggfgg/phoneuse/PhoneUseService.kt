@@ -2,6 +2,7 @@ package ai.nidhoggfgg.phoneuse
 
 import android.app.*
 import android.content.Intent
+import android.content.Context
 import android.content.pm.ServiceInfo
 import android.content.res.Configuration
 import android.os.Build
@@ -14,6 +15,7 @@ import androidx.core.content.ContextCompat
 import ai.nidhoggfgg.phoneuse.core.DeviceController
 import ai.nidhoggfgg.phoneuse.device.AndroidBackend
 import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
+import ai.nidhoggfgg.phoneuse.device.KeepAliveSettings
 import ai.nidhoggfgg.phoneuse.server.HttpServer
 import ai.nidhoggfgg.phoneuse.server.IdentityStore
 import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
@@ -28,6 +30,7 @@ class PhoneUseService : Service() {
     private var starting = false
     private val connectionSettings by lazy { ConnectionSettings(this) }
     private val launchGuidance by lazy { AppLaunchGuidance(this) }
+    private val keepAlive by lazy { KeepAliveSettings(this) }
     private val connectionListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == ConnectionSettings.ALLOW_HTTP) server?.setAllowInsecureHttp(connectionSettings.allowInsecureHttp)
     }
@@ -58,8 +61,18 @@ class PhoneUseService : Service() {
         updateNotification(force = true)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Re-check at delivery time: the user may have disabled recovery after it was queued.
+        if ((intent == null || intent.action == ACTION_RESTORE) && !keepAlive.enabled) {
+            // Ignore a stale recovery command if a user-started session is already running.
+            if (server == null && !starting) stopSelf()
+            return START_NOT_STICKY
+        }
         if (server == null && !starting) startEndpoint()
-        return START_STICKY
+        return if (keepAlive.enabled) START_STICKY else START_NOT_STICKY
+    }
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (!keepAlive.enabled) stopSelf()
+        super.onTaskRemoved(rootIntent)
     }
     private fun startEndpoint() {
         starting = true
@@ -140,6 +153,20 @@ class PhoneUseService : Service() {
     data class ServiceError(val messageRes: Int, val detail: String)
     companion object {
         const val CHANNEL = "phone_use_control"
+        private const val ACTION_RESTORE = "ai.nidhoggfgg.phoneuse.RESTORE"
+
+        /** Start only at OS-granted opportunities; never use alarms or retry loops to evade a stop. */
+        internal fun restoreIfEnabled(context: Context) {
+            if (!KeepAliveSettings(context).enabled) return
+            try {
+                context.startForegroundService(Intent(context, PhoneUseService::class.java).setAction(ACTION_RESTORE))
+            } catch (e: IllegalStateException) {
+                // Includes ForegroundServiceStartNotAllowedException on restricted firmware.
+                lastError = ServiceError(R.string.http_start_failed, e.javaClass.simpleName)
+            } catch (e: SecurityException) {
+                lastError = ServiceError(R.string.http_start_failed, e.javaClass.simpleName)
+            }
+        }
         @Volatile var current: PhoneUseService? = null
             private set
         @Volatile var lastError: ServiceError? = null

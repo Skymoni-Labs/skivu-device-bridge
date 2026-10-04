@@ -65,7 +65,7 @@
     <string name="accessibility_core_permission">Core permission</string>
     <string name="accessibility_ready">Enabled · Ready for device actions</string>
     <string name="accessibility_needed">Not enabled · Device actions unavailable</string>
-    <string name="accessibility_enable_help">In system accessibility settings, find Phone Use under Downloaded apps or Installed services, then turn on the service and confirm.</string>
+    <string name="accessibility_enable_help">In system accessibility settings, find Phone Use under Downloaded apps or Installed services, then turn on the service and confirm. If it stops working after leaving the app, check Settings → Background keep-alive in Phone Use.</string>
     <string name="enable">Enable</string>
     <string name="manage">Manage</string>
     <string name="connection_details">Connection details</string>
@@ -96,4 +96,20 @@
     <string name="access_allowlist_active">Only addresses in the allowlist are accepted. Network routing and port forwarding must be configured separately.</string>
     <string name="local_console_blocked">The local web console is blocked by the allowlist. Add 127.0.0.1 in Settings or clear the list to restore default IP access.</string>
     <string name="save_allowlist">Save allowlist</string>
+    <string name="keep_alive_title">Background keep-alive</string>
+    <string name="keep_alive_enabled_help">Keep the control service running with a persistent notification. Try to restore it after system reclamation, reboot, an app update, or accessibility reconnection. May increase battery use.</string>
+    <string name="keep_alive_disabled_help">Automatic recovery is off. Removing Phone Use from recent apps stops the control service. Switching to another app keeps the current session running. Accessibility permission and system battery settings stay unchanged.</string>
+    <string name="keep_alive_battery_exempt">System battery optimization: unrestricted</string>
+    <string name="keep_alive_battery_restricted">System battery optimization: active; background connections may be interrupted</string>
+    <string name="keep_alive_battery_settings">Battery optimization</string>
+    <string name="keep_alive_autostart_settings">Autostart settings</string>
+    <string name="keep_alive_xiaomi_help">In HyperOS / MIUI, allow Phone Use to autostart, set battery saver to No restrictions, and lock it in recent apps. Autostart must be checked manually; unavailable shortcuts open app details.</string>
+    <string name="keep_alive_huawei_help">In App launch, manage Phone Use manually and allow auto-launch, secondary launch, and background activity. Lock it in recent apps. Check these settings manually; unavailable shortcuts open app details.</string>
+    <string name="keep_alive_autostart_help">Allow Phone Use to autostart and run in the background, remove battery restrictions, and lock it in recent apps. Check these settings manually; unavailable shortcuts open app details.</string>
+    <string name="keep_alive_samsung_help">In Battery → Background usage limits, add Phone Use to Never sleeping apps. The button opens app details; also allow background battery use there. Check these settings manually.</string>
+    <string name="keep_alive_generic_help">In system app settings, allow background battery use and autostart if available. If your system supports it, lock Phone Use in recent apps. These options vary by device and must be checked manually.</string>
+    <string name="keep_alive_notifications_help">The service notification is disabled. Allow it to see background status and return to Phone Use easily.</string>
+    <string name="keep_alive_notification_settings">Notification settings</string>
+    <string name="keep_alive_limits">System permissions need your confirmation. Force-stop and some vendor restrictions can still stop the app. Reopen Phone Use after a force-stop; if accessibility was turned off, enable it again in system settings.</string>
+    <string name="keep_alive_settings_unavailable">Could not open settings. Open Phone Use’s app details in system settings to allow background activity and autostart.</string>
 </resources>

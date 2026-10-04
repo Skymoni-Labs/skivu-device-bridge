@@ -12,6 +12,7 @@ import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
 import ai.nidhoggfgg.phoneuse.device.AppLaunchNotifications
 import ai.nidhoggfgg.phoneuse.device.BackgroundLaunchPermission
 import ai.nidhoggfgg.phoneuse.device.BackgroundLaunchPermissionChecker
+import ai.nidhoggfgg.phoneuse.device.KeepAliveSettings
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.test.*
@@ -42,12 +43,15 @@ class DashboardSettingsTest {
     private val connections = ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context)
     private var originalHttp = false
     private var originalAllowedHosts = emptyList<String>()
+    private var originalUnconfirmedPackage: String? = null
 
     @Before fun launch() {
         originalLocales = LocaleManagerCompat.getApplicationLocales(context)
         originalName = identityPreferences.getString("name", null)
         originalHttp = connections.allowInsecureHttp
         originalAllowedHosts = connections.allowedHosts
+        originalUnconfirmedPackage = AppLaunchGuidance(context).unconfirmedPackage
+        AppLaunchGuidance(context).clearWarning()
         connections.allowInsecureHttp = false
         connections.allowedHosts = emptyList()
         context.stopService(Intent(context, PhoneUseService::class.java))
@@ -79,6 +83,7 @@ class DashboardSettingsTest {
         }.commit()
         connections.allowInsecureHttp = originalHttp
         connections.allowedHosts = originalAllowedHosts
+        originalUnconfirmedPackage?.let { AppLaunchGuidance(context).recordUnconfirmed(it) }
     }
 
     @Test fun dashboardShowsRunningServiceWithoutStartPauseOrStopButtons() {
@@ -135,7 +140,7 @@ class DashboardSettingsTest {
                 compose.onAllNodesWithText("com.example.target", substring = true).fetchSemanticsNodes().isNotEmpty()
             }
             compose.onNodeWithText("Last launch was not confirmed:", substring = true).performScrollTo().assertIsDisplayed()
-            compose.onNodeWithText("Open settings").assertIsDisplayed()
+            compose.onNodeWithText("Open settings").performScrollTo().assertIsDisplayed()
             screenshot("launch-reminder-en")
             compose.waitUntil(5_000) { PhoneUseService.current?.stateMessage() == R.string.launch_unconfirmed_notification }
             compose.waitUntil(5_000) {
@@ -256,7 +261,7 @@ class DashboardSettingsTest {
             clientId = credential.getString("client_id")
             compose.onNodeWithContentDescription("Settings").performClick()
             screenshot("settings-en")
-            compose.onNodeWithText("中文").performClick()
+            compose.onNodeWithText("中文").performScrollTo().performClick()
             waitForText("语言")
             compose.onNodeWithText("中文").assertIsSelected()
             screenshot("settings-zh")
@@ -280,7 +285,7 @@ class DashboardSettingsTest {
             waitForText("本机")
             assertSame(service, PhoneUseService.current)
             compose.onNodeWithContentDescription("设置").performClick()
-            compose.onNodeWithText("English").performClick()
+            compose.onNodeWithText("English").performScrollTo().performClick()
             waitForText("Language")
             compose.onNodeWithText("English").assertIsSelected()
             // The theme and language groups both contain this label; choose the language row.
@@ -292,6 +297,47 @@ class DashboardSettingsTest {
         } finally {
             clientId?.let { service.revokeClient(it) }
             service.identities.pairing.clear()
+        }
+    }
+
+    @Test fun keepAliveDefaultsOnPersistsAndStopsOnlyWhenTaskIsRemoved() {
+        val preferences = context.getSharedPreferences("keep_alive", Context.MODE_PRIVATE)
+        val original = preferences.all["enabled"] as? Boolean
+        try {
+            preferences.edit().remove("enabled").commit()
+            assertTrue(KeepAliveSettings(context).enabled)
+            compose.onNodeWithContentDescription("Settings").performClick()
+            compose.onNodeWithText("Background keep-alive").assertIsOn()
+            compose.onNodeWithText("Battery optimization").assertIsDisplayed()
+            compose.onNodeWithText("Autostart settings").assertIsDisplayed()
+            screenshot("keep-alive-en")
+            val running = PhoneUseService.current!!
+            compose.onNodeWithText("Background keep-alive").performClick().assertIsOff()
+            assertFalse(KeepAliveSettings(context).enabled)
+            compose.onNodeWithText("Autostart settings").assertDoesNotExist()
+            scenario.recreate()
+            compose.onNodeWithText("Background keep-alive").assertIsOff()
+            scenario.moveToState(Lifecycle.State.CREATED)
+            assertSame(running, PhoneUseService.current)
+            instrumentation.runOnMainSync { running.onTaskRemoved(Intent(context, MainActivity::class.java)) }
+            compose.waitUntil(10_000) { PhoneUseService.current == null }
+            // Reopening explicitly starts a session even when background recovery is disabled.
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            compose.waitUntil(10_000) { PhoneUseService.current != null }
+            compose.onNodeWithText("Background keep-alive").assertIsOff().performClick().assertIsOn()
+            val restored = PhoneUseService.current!!
+            scenario.moveToState(Lifecycle.State.CREATED)
+            instrumentation.runOnMainSync { restored.onTaskRemoved(Intent(context, MainActivity::class.java)) }
+            assertSame(restored, PhoneUseService.current)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+            waitForText("后台保活")
+            compose.onNodeWithText("后台保活").performScrollTo().assertIsOn()
+            screenshot("keep-alive-zh")
+        } finally {
+            preferences.edit().apply {
+                if (original == null) remove("enabled") else putBoolean("enabled", original)
+            }.commit()
         }
     }
 

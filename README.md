@@ -42,6 +42,8 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See 
 
 On Xiaomi/Redmi/POCO, Phone Use checks the background pop-up permission when the screen resumes. The dashboard shows **Background app launches** when the permission is denied or a launch was not confirmed. If the firmware does not support checking, the dashboard only shows a reminder after an unconfirmed launch. **Settings → Background app launches** always provides a manual entry to system permissions; permission changes must be made there. On every brand, a denied or unconfirmed launch also posts a separate notification that opens Phone Use. Repeated failures update one notification; a confirmed launch or dismissing the in-app reminder clears it.
 
+**Settings → Background keep-alive** is enabled by default and can be turned off. It includes battery optimization, autostart, and notification guidance. Allow background activity and lock the recent task where supported to reduce accessibility interruptions. Force-stop still requires reopening the app, and revoked accessibility access needs manual re-enabling; see [Usage](docs/usage.md).
+
 ### 3. Pair a client
 
 Connect with the Python client or MCP bridge using `https://PHONE_IPV4:8443`. Compare all eight digits with the phone, approve there, and confirm the match in the client. No certificate installation or long fingerprint copy is needed. Direct browser access requires separate certificate trust.

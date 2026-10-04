@@ -56,7 +56,7 @@ fun PhoneUseApp(
         }
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (settingsOpen) SettingsScreen()
+            if (settingsOpen) SettingsScreen(onKeepAliveChanged = onRetryService)
             else Dashboard(onRetryService, onAccessibilitySettings, onOpenWebConsole)
         }
     }

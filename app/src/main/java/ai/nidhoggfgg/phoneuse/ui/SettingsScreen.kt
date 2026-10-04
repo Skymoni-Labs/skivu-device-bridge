@@ -28,7 +28,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.os.LocaleListCompat
 
 @Composable
-internal fun SettingsScreen() {
+internal fun SettingsScreen(onKeepAliveChanged: () -> Unit) {
     val context = LocalContext.current
     var selectedTheme by remember { mutableIntStateOf(ThemePreference.read(context)) }
     val selectedLanguage = AppCompatDelegate.getApplicationLocales()[0]?.language.orEmpty()
@@ -41,6 +41,7 @@ internal fun SettingsScreen() {
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        KeepAliveCard(onKeepAliveChanged)
         SectionCard {
             Text(stringResource(R.string.theme), style = MaterialTheme.typography.titleMedium)
             Column(Modifier.selectableGroup()) {
