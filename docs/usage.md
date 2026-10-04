@@ -2,6 +2,22 @@
 
 **English** | [简体中文](usage.zh-CN.md)
 
+## Connect your AI
+
+1. Download the APK from [GitHub Releases](https://github.com/nidhoggfgg/PhoneUse/releases/latest), install it on Android 11+, and open Phone Use.
+2. Enable Accessibility and allow notifications and local-network access when requested. Keep the phone awake and unlocked. Your agent's computer needs Python 3.10+ and network access to the phone.
+3. In **Connect your AI**, choose a reachable phone address, copy the complete prompt, and send it to your agent. It installs the Skill and starts pairing. Compare all eight digits shown by the agent and phone, approve on the phone, then tell the agent you confirmed the match.
+
+You can now ask the agent to operate your phone. Completed pairings survive restarts. Manual Skill installation, MCP, and updates are covered in the [AI integration guide](integrations.md).
+
+## Permissions and background app launches
+
+Some Android versions require allowing **restricted settings** in the system's app details before enabling Accessibility for a sideloaded APK. Allow notifications when prompted; Android 17+ also requests local-network permission.
+
+On Xiaomi/Redmi/POCO, Phone Use checks the background pop-up permission when the screen resumes. The dashboard shows **Background app launches** when the permission is denied or a launch was not confirmed. If the firmware does not support checking, the dashboard only shows a reminder after an unconfirmed launch. **Settings → Background app launches** always provides a manual entry to system permissions. Allow background pop-up windows there; opening the settings page does not grant permission.
+
+On every brand, a denied or unconfirmed launch also posts a notification that opens Phone Use. Repeated failures update one notification; a confirmed launch or dismissing the in-app reminder clears it. Check the phone for app-opening dialogs or loading delays before retrying. If the service stops when you leave the app, see [background keep-alive](#service-and-pairing-persistence).
+
 ## Web console
 
 The app's **Open web console** button always opens `http://127.0.0.1:8443/`. The button is disabled when a configured access address allowlist omits `127.0.0.1`; add it or clear the list to restore access. Only local access through `127.0.0.1` allows HTTP without the insecure-HTTP switch; address checks and pairing still apply. Remote browser access defaults to `https://192.168.1.20:8443/` and requires independently established certificate trust. Its six-digit authorization code does not replace TLS authentication. The console supports API forms, JSON editing and explicit screenshots.

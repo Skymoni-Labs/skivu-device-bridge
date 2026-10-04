@@ -2,9 +2,19 @@
 
 [English](validation.md) | **简体中文**
 
-## 构建与自动检查
+## 从源码构建
 
 使用 JDK 25、Android SDK 37 和仓库内的 Gradle wrapper。SDK 路径在本机配置，不提交机器路径。
+
+```sh
+git clone --recurse-submodules https://github.com/nidhoggfgg/PhoneUse.git
+cd PhoneUse
+./gradlew :app:assembleDebug
+```
+
+Windows 使用 `.\gradlew.bat :app:assembleDebug`。将 `app/build/outputs/apk/debug/app-debug.apk` 安装到 Android 11+ 手机即可。构建会把客户端、API 参考和 Skill 指引打包进 APK。已有仓库构建前先运行 `git submodule update --init --recursive`，初始化或更新 Skill。
+
+## 自动检查
 
 ```sh
 git submodule update --init --recursive

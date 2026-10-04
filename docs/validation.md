@@ -2,9 +2,19 @@
 
 **English** | [简体中文](validation.zh-CN.md)
 
-## Build and automated checks
+## Build from source
 
 Use JDK 25 and Android SDK 37 with the checked-in Gradle wrapper. Configure the SDK locally; do not commit machine paths.
+
+```sh
+git clone --recurse-submodules https://github.com/nidhoggfgg/PhoneUse.git
+cd PhoneUse
+./gradlew :app:assembleDebug
+```
+
+On Windows, use `.\gradlew.bat :app:assembleDebug`. Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11+. The build bundles the client, API references, and Skill instructions into the APK. For an existing checkout, initialize or update the Skill with `git submodule update --init --recursive` before building.
+
+## Automated checks
 
 ```sh
 git submodule update --init --recursive
