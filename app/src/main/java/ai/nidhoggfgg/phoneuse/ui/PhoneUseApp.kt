@@ -89,6 +89,7 @@ private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () ->
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
+        AccessibilityPermissionCard(accessibility, onAccessibilitySettings)
         DeviceCard(identity, identity.name, onEdit = { editingName = true })
         SectionCard {
             Text(stringResource(R.string.control_service), style = MaterialTheme.typography.titleMedium)
@@ -102,17 +103,6 @@ private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () ->
             if (service == null && serviceError != null) {
                 Text(stringResource(serviceError.messageRes, serviceError.detail), color = MaterialTheme.colorScheme.error)
                 Button(onClick = onRetryService, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_service)) }
-            }
-            HorizontalDivider()
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(stringResource(R.string.accessibility_title), style = MaterialTheme.typography.bodyLarge)
-                    Text(stringResource(if (accessibility) R.string.accessibility_ready else R.string.accessibility_needed),
-                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                TextButton(onClick = onAccessibilitySettings) {
-                    Text(stringResource(if (accessibility) R.string.manage else R.string.enable))
-                }
             }
             Text(stringResource(R.string.keep_unlocked), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)

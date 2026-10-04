@@ -61,8 +61,9 @@
     <string name="hide_details">收起详情</string>
     <string name="control_service">控制服务</string>
     <string name="accessibility_title">无障碍权限</string>
+    <string name="accessibility_core_permission">核心权限</string>
     <string name="accessibility_ready">已开启，可操作设备</string>
-    <string name="accessibility_needed">开启后可执行设备操作</string>
+    <string name="accessibility_needed">未开启，无法操作设备</string>
     <string name="enable">去开启</string>
     <string name="manage">管理</string>
     <string name="connection_details">连接详情</string>
