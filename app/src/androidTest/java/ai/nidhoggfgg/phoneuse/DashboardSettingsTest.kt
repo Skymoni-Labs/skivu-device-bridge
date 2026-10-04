@@ -99,26 +99,44 @@ class DashboardSettingsTest {
         assertNotNull(PhoneUseService.current)
     }
 
-    @Test fun aiSetupLinkUsesSelectedHttpsAddressAndBundledArchiveHash() {
+    @Test fun aiSetupPromptUsesSelectedAddressAndCopiesTheDisplayedInstructions() {
         connections.allowInsecureHttp = true
         connections.allowedHosts = listOf("phone.example", "2001:db8::1")
         compose.waitUntil(5_000) {
             compose.onAllNodesWithText("https://phone.example:8443", substring = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("Copy AI setup link").performScrollTo().performClick()
-        compose.onNode(hasText("https://[2001:db8::1]:8443") and hasClickAction()).performClick()
+        compose.onNodeWithTag("ai-address").performScrollTo().performClick()
+        compose.onNode(hasText("2001:db8::1") and hasClickAction()).performClick()
         val hash = context.assets.open("phone-use.zip").use {
             ai.nidhoggfgg.phoneuse.server.PairingCrypto.hash(it.readBytes())
         }
-        instrumentation.runOnMainSync {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            assertEquals("https://[2001:db8::1]:8443/connect#sha256=$hash",
-                clipboard.primaryClip!!.getItemAt(0).text.toString())
+        fun assertPromptAndCopy(origin: String) {
+            val expected = "Read this link, install the Phone Use Skill and connect to my phone. " +
+                "Show me the pairing code and wait for my confirmation before continuing.\n\n$origin/connect#sha256=$hash"
+            compose.onNodeWithTag("ai-prompt").assertTextEquals(expected)
+            compose.onNodeWithContentDescription("Copy prompt").performScrollTo().performClick()
+            compose.onNodeWithContentDescription("Copied").assertIsDisplayed()
+            instrumentation.runOnMainSync {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                assertEquals(expected, clipboard.primaryClip!!.getItemAt(0).text.toString())
+            }
         }
+        assertPromptAndCopy("https://[2001:db8::1]:8443")
+        scenario.recreate()
+        waitForText("Connect your AI")
+        compose.onNodeWithTag("ai-address").assertTextContains("2001:db8::1")
+        // A removed address must not remain in a prompt the user is about to copy.
+        connections.allowedHosts = listOf("192.168.1.20")
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("192.168.1.20").fetchSemanticsNodes().isNotEmpty()
+        }
+        assertPromptAndCopy("https://192.168.1.20:8443")
+        compose.onNodeWithTag("ai-prompt").performScrollTo()
         screenshot("ai-setup-en")
         instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
-        waitForText("复制 AI 接入链接")
-        compose.onNodeWithText("复制 AI 接入链接").performScrollTo().assertIsDisplayed()
+        waitForText("连接 AI")
+        compose.onNodeWithContentDescription("复制提示词").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("ai-prompt").performScrollTo()
         screenshot("ai-setup-zh")
     }
 
@@ -405,9 +423,12 @@ class DashboardSettingsTest {
         scenario.recreate()
         compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOn()
         compose.onNodeWithContentDescription("Back").performClick()
-        compose.onNodeWithText("https://$remote:8443", substring = true).performScrollTo().assertTextContains("http://$remote:8443", substring = true)
-        compose.onNodeWithText("https://phone.example:8443", substring = true).assertTextContains("http://phone.example:8443", substring = true)
-        compose.onNodeWithText("https://127.0.0.1:8443", substring = true).assertExists()
+        compose.onNodeWithTag("connection-addresses").performScrollTo()
+            .assertTextContains("https://$remote:8443", substring = true)
+            .assertTextContains("http://$remote:8443", substring = true)
+            .assertTextContains("https://phone.example:8443", substring = true)
+            .assertTextContains("http://phone.example:8443", substring = true)
+            .assertTextContains("https://127.0.0.1:8443", substring = true)
         screenshot("http-addresses-en")
         context.stopService(Intent(context, PhoneUseService::class.java))
         compose.waitUntil(10_000) { PhoneUseService.current == null }
@@ -422,7 +443,7 @@ class DashboardSettingsTest {
         scenario.recreate()
         compose.onNodeWithText("Allow insecure HTTP connections").performScrollTo().assertIsOff()
         compose.onNodeWithContentDescription("Back").performClick()
-        val addresses = compose.onNodeWithText("https://phone.example:8443", substring = true).performScrollTo()
+        val addresses = compose.onNodeWithTag("connection-addresses").performScrollTo()
         assertFalse(addresses.fetchSemanticsNode().config[androidx.compose.ui.semantics.SemanticsProperties.Text].joinToString().contains("http://"))
 
         compose.onNodeWithContentDescription("Settings").performClick()

@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="copy_ai_link">复制 AI 接入链接</string>
-    <string name="ai_link_help">将链接发给 AI，即可从手机下载 Skill；核对配对码后在这里批准，无需 npx。</string>
+    <string name="ai_connection_title">连接 AI</string>
+    <string name="ai_connection_help">选择 AI 能访问的手机地址，再复制下方提示词发给 AI。</string>
+    <string name="ai_phone_address">手机地址</string>
+    <string name="ai_connection_prompt">请读取以下链接，安装 Phone Use Skill 并连接我的手机。配对时请显示核对码，等我确认后再继续。\n\n%1$s</string>
+    <string name="copy_ai_prompt">复制提示词</string>
+    <string name="ai_prompt_copied">已复制</string>
     <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可随时在 App 中撤销客户端授权。</string>
     <string name="device_name">设备名称</string>
     <string name="save_name">保存名称</string>

@@ -56,7 +56,7 @@ Pairing persists across client and app restarts until revoked or its stored cred
 
 ## Connect an AI agent
 
-The recommended route is **Copy AI setup link** in the phone app. Give the link to your AI and ask it to connect. It reads `/connect`, downloads the complete Skill from the same port, verifies and installs it, then starts pairing. Compare all eight digits, approve on the phone, and explicitly confirm the match to the AI. Only **Python 3.10+** is needed; no npx, Node.js, Git, or Internet download. The Skill updates with the app.
+In the phone app's **Connect your AI** card, choose the phone address and use the copy button beside the prompt. Send the complete prompt to your AI. It reads the linked guide, downloads the complete Skill from the phone, verifies and installs it, then starts pairing. Compare all eight digits, approve on the phone, and explicitly confirm the match to the AI. The host needs **Python 3.10+**. The Skill updates with the app.
 
 The AI host must run programs and reach the phone's address; a cloud-only chat cannot directly reach a phone on your LAN. GitHub installation remains available with **Node.js 22.20+**, **Git**, and **Python 3.10+**:
 

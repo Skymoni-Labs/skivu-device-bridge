@@ -18,18 +18,18 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import java.net.NetworkInterface
+import java.net.URI
 
 @Composable
 internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
     val context = LocalContext.current
     val settings = remember(context) { ConnectionSettings(context) }
-    val skills = remember(context) {
-        SkillDistribution({ context.assets.open(it).use { stream -> stream.readBytes() } }, BuildConfig.VERSION_NAME)
-    }
     val addresses = remember(tick / 10) {
         runCatching {
             NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
@@ -44,23 +44,15 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
     val (ipv6Urls, primaryUrls) = urls.partition { it.substringAfter("://").startsWith("[") }
     var ipv6Open by rememberSaveable { mutableStateOf(false) }
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
-    var chooseAiAddress by remember { mutableStateOf(false) }
-    val aiOrigins = urls.filter { it.startsWith("https://") }
-    val aiLinkLabel = stringResource(R.string.copy_ai_link)
-    fun copyAiLink(origin: String) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(aiLinkLabel, skills.connectUrl(origin)))
-        chooseAiAddress = false
-    }
+    AiConnectionCard(urls.filter { it.startsWith("https://") })
     SectionCard {
         Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.ai_link_help), style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (urls.isEmpty()) {
             Text(stringResource(R.string.no_network_address), style = MaterialTheme.typography.bodyMedium)
         } else {
             if (primaryUrls.isNotEmpty()) SelectionContainer {
-                Text(primaryUrls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge)
+                Text(primaryUrls.joinToString("\n"), style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.testTag("connection-addresses"))
             }
             if (ipv6Urls.isNotEmpty()) {
                 TextButton(onClick = { ipv6Open = !ipv6Open }) {
@@ -76,18 +68,6 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         if (!localConsoleAllowed) Text(stringResource(R.string.local_console_blocked),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Box {
-                Button(onClick = {
-                    if (aiOrigins.size == 1) copyAiLink(aiOrigins.single()) else chooseAiAddress = true
-                }, enabled = aiOrigins.isNotEmpty() && PhoneUseService.current != null) {
-                    Text(aiLinkLabel)
-                }
-                DropdownMenu(expanded = chooseAiAddress, onDismissRequest = { chooseAiAddress = false }) {
-                    aiOrigins.forEach { origin ->
-                        DropdownMenuItem(text = { Text(origin) }, onClick = { copyAiLink(origin) })
-                    }
-                }
-            }
             OutlinedButton(onClick = onOpenWebConsole, enabled = localConsoleAllowed) { Text(stringResource(R.string.open_web_console)) }
             TextButton(onClick = { detailsOpen = !detailsOpen }) {
                 Text(stringResource(if (detailsOpen) R.string.hide_details else R.string.connection_details))
@@ -99,6 +79,71 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             SelectionContainer { Text("API: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.pairing_persistence_help), style = MaterialTheme.typography.bodySmall)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AiConnectionCard(origins: List<String>) {
+    val context = LocalContext.current
+    val skills = remember(context) {
+        SkillDistribution({ context.assets.open(it).use { stream -> stream.readBytes() } }, BuildConfig.VERSION_NAME)
+    }
+    var selectedOrigin by rememberSaveable { mutableStateOf<String?>(null) }
+    var addressesOpen by remember { mutableStateOf(false) }
+    val origin = selectedOrigin?.takeIf { it in origins } ?: origins.firstOrNull()
+    // Keep the selection valid when network interfaces or the address allowlist change.
+    LaunchedEffect(origin) { selectedOrigin = origin }
+    val link = remember(skills, origin) { origin?.let(skills::connectUrl) }
+    val prompt = link?.let { stringResource(R.string.ai_connection_prompt, it) }
+    val copyLabel = stringResource(R.string.copy_ai_prompt)
+    var copied by remember(prompt) { mutableStateOf(false) }
+    fun address(value: String) = URI(value).host.removeSurrounding("[", "]")
+
+    SectionCard {
+        Text(stringResource(R.string.ai_connection_title), style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.ai_connection_help), style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ExposedDropdownMenuBox(expanded = addressesOpen, onExpandedChange = {
+            if (origins.isNotEmpty()) addressesOpen = !addressesOpen
+        }) {
+            OutlinedTextField(
+                value = origin?.let(::address).orEmpty(), onValueChange = {}, readOnly = true,
+                label = { Text(stringResource(R.string.ai_phone_address)) },
+                placeholder = { Text(stringResource(R.string.no_network_address)) },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = addressesOpen) },
+                enabled = origins.isNotEmpty(), singleLine = true,
+                modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth().testTag("ai-address")
+            )
+            ExposedDropdownMenu(expanded = addressesOpen, onDismissRequest = { addressesOpen = false }) {
+                origins.forEach { candidate ->
+                    DropdownMenuItem(text = { Text(address(candidate)) }, onClick = {
+                        selectedOrigin = candidate
+                        addressesOpen = false
+                    })
+                }
+            }
+        }
+        if (prompt != null) {
+            Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
+                    verticalAlignment = Alignment.Top) {
+                    SelectionContainer(Modifier.weight(1f).padding(vertical = 4.dp)) {
+                        Text(prompt, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("ai-prompt"))
+                    }
+                    IconButton(onClick = {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        clipboard.setPrimaryClip(ClipData.newPlainText(copyLabel, prompt))
+                        copied = true
+                    }, enabled = PhoneUseService.current != null) {
+                        Icon(painterResource(if (copied) R.drawable.ic_check else R.drawable.ic_copy),
+                            contentDescription = stringResource(if (copied) R.string.ai_prompt_copied else R.string.copy_ai_prompt),
+                            tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+            }
         }
     }
 }

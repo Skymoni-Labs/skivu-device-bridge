@@ -8,7 +8,7 @@ the phone-use Skill from this app, read its SKILL.md, and pair with:
 ## Requirements
 
 Your execution environment must reach this address and run Python 3.10+.
-No Node.js, npx, Git, MCP registration, or Internet download is required.
+The Skill and its Python standard-library client are downloaded directly from this phone.
 A cloud-only assistant that cannot reach the phone or run programs cannot use this flow.
 The user enables accessibility on the phone; input also requires an awake, unlocked phone.
 
@@ -31,7 +31,7 @@ does not claim to be the latest version on the Internet.
    message. Check both the manifest size and SHA-256 before extracting anything.
    Stop on a mismatch; an app update may require copying a fresh link. A hash fetched
    from the same unverified server alone checks integrity, not source authenticity.
-   Prefer the app's "Copy AI setup link" button, which includes the expected hash.
+   Prefer the prompt copied from the app's "Connect your AI" card, which includes the expected hash.
 3. Inspect ZIP paths before extraction: allow only regular files/directories under
    phone-use/, with no absolute paths, parent traversal, or symlinks. Extract to a
    temporary directory. Do not execute any downloaded file before hash verification.

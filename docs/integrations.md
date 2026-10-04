@@ -2,17 +2,17 @@
 
 **English** | [简体中文](integrations.zh-CN.md)
 
-The recommended route is to give your AI the app's setup link and install the Skill directly from the phone, without npx. GitHub Skill installation and MCP remain available.
+The recommended route is to send your AI the prompt provided by the app to install the Skill directly from the phone and connect. GitHub Skill installation and MCP remain available.
 
 ## Install directly from the phone (recommended)
 
 1. Open the app, enable accessibility, and ensure the AI's execution environment can reach the phone.
-2. Tap **Copy AI setup link**. If several addresses are available, choose one reachable by the AI.
-3. Send the full link to the AI and ask it to install the Skill and connect. It looks like `https://PHONE:8443/connect#sha256=PACKAGE_HASH`.
+2. In **Connect your AI**, choose a phone address reachable by the AI.
+3. Use the copy button beside the prompt and send the complete text to the AI. It includes connection instructions and a link like `https://PHONE:8443/connect#sha256=PACKAGE_HASH`.
 4. The AI reads the guide, downloads the complete Skill from the same port, checks the SHA-256 from your original link, and installs it in its host's Skill directory. A host without persistent Skill installation can extract it into a workspace and run the client directly.
 5. Compare all eight digits shown by the AI and phone, approve on the phone, and explicitly confirm the match to the AI. Later connections reuse the saved pairing.
 
-This route needs only **Python 3.10+ and its standard library**. No Node.js, npx, Git, MCP setup, or Internet access is needed. The AI must have file access, program execution, and network access to the phone; a URL cannot grant these capabilities to a cloud-only chat. Hosts that discover new Skills only in a new session can still read SKILL.md and run the client in the current session.
+This route uses **Python 3.10+ and its standard library**. The AI must have file access, program execution, and network access to the phone; a URL cannot grant these capabilities to a cloud-only chat. Hosts that discover new Skills only in a new session can still read SKILL.md and run the client in the current session.
 
 The package matches the installed app. After an app update, copy a fresh link and ask the AI to update its Skill. Stop on a hash mismatch; preserve customized files as a backup and keep `~/.phoneuse.json`. Initial downloads use self-signed TLS: only public, credential-free downloads may skip certificate-chain validation, with the hash from the user's link checked before execution. Pairing and control retain the client's strict public-key checks. A hash fetched from the same unverified server alone checks integrity, not authenticity.
 
