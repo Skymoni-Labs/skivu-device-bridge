@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">Phone Use</string>
-    <string name="accessibility_description">Allow paired external clients to read the screen and UI elements, and perform taps, text input, and navigation. Keep the phone awake and unlocked. Pause or stop the service from the notification at any time.</string>
+    <string name="accessibility_description">Allow paired external clients to read the screen and UI elements, and perform taps, text input, and navigation. Keep the phone awake and unlocked. You can revoke client access in the app at any time.</string>
     <string name="device_name">Device name</string>
     <string name="save_name">Save name</string>
     <string name="device_emulator">Emulator</string>
     <string name="device_physical">Physical device</string>
     <string name="device_id">Device ID: %1$s</string>
     <string name="device_identity_help">The device ID stays with this installation. IP address changes do not affect pairing.</string>
-    <string name="service_stopped">Service not started</string>
-    <string name="keep_unlocked">Keep the phone awake and unlocked during use. Pause or stop from the notification at any time.</string>
+    <string name="service_unavailable">Service unavailable</string>
+    <string name="keep_unlocked">Keep the phone awake and unlocked during use. You can revoke client access in the app at any time.</string>
     <string name="background_launch_title">Background app launches</string>
     <string name="background_launch_allowed">Background pop-up windows are allowed.</string>
     <string name="background_launch_denied">Background pop-up windows are not allowed.</string>
@@ -25,13 +25,10 @@
     <string name="open_launch_settings">Open settings</string>
     <string name="dismiss_launch_warning">Dismiss reminder</string>
     <string name="launch_settings_unavailable">Could not open settings. Open Phone Use’s app details in system settings to check its permissions.</string>
-    <string name="start_http_service">Start service</string>
-    <string name="resume_control">Resume control</string>
-    <string name="pause_control">Pause control</string>
-    <string name="stop_service">Stop service</string>
+    <string name="retry_service">Retry connection</string>
     <string name="connection_pairing">Connection and pairing</string>
     <string name="connection_help">Connect with MCP or the Python client on the same network. Compare all eight digits before approving here. The local web console uses HTTP and follows the access address allowlist. Remote HTTPS browsers require certificate trust.</string>
-    <string name="pairing_persistence_help">Pair each client once. An enabled service restarts when the app opens; pause state and paired clients are preserved.</string>
+    <string name="pairing_persistence_help">Pair each client once. The service starts automatically when the app opens, and paired clients are preserved.</string>
     <string name="open_web_console">Open web console</string>
     <string name="pairing_requests">Pairing requests</string>
     <string name="pairing_source">Source: %1$s · Name provided by client</string>
@@ -47,12 +44,8 @@
     <string name="http_start_failed">Could not start connection service: %1$s</string>
     <string name="client_storage_failed">Could not initialize client storage: %1$s</string>
     <string name="service_pairing_pending">Pairing request received · Open app to approve</string>
-    <string name="service_paused">Control paused</string>
     <string name="service_recent_request">Recent client activity · Service available</string>
     <string name="service_available">Service available, waiting for connections</string>
-    <string name="notification_resume">Phone Use: Resume</string>
-    <string name="notification_pause">Phone Use: Pause</string>
-    <string name="notification_stop">Phone Use: Stop service</string>
     <string name="device_name_invalid">Device name must contain 1–80 printable characters.</string>
     <string name="device_name_save_failed">Could not save the device name. Please try again.</string>
     <string name="pairing_approval_failed">Could not save client approval. Please try again.</string>

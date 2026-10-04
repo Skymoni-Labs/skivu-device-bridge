@@ -17,7 +17,6 @@ try {
 } catch { sessionStorage.removeItem('phoneuse.pairing'); }
 $('endpoints').textContent = t('endpoints', { origin: location.origin });
 const messages = {
-  PAUSED: t('error_paused'),
   CANCELLED: t('error_cancelled'),
   UNAUTHORIZED: t('error_unauthorized'),
   STALE_OBSERVATION: t('error_stale_observation')

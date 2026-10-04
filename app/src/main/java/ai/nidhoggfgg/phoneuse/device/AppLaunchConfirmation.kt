@@ -21,7 +21,7 @@ internal class AppLaunchConfirmation(private val clock: () -> Long, private val 
                 sleep(minOf(100L, remaining))
             }
         } catch (error: Exception) {
-            // The Intent was already sent. Pause/revocation/service loss cannot undo it.
+            // The Intent was already sent. Cancellation/revocation/service loss cannot undo it.
             fail("RESULT_UNKNOWN", "Launch request was sent, but foreground confirmation was interrupted; observe before retrying",
                 json("reason" to "launch_confirmation_interrupted", "package_name" to packageName,
                     "cause" to ((error as? DeviceError)?.code ?: "CONFIRMATION_UNAVAILABLE"), "action_executed" to JSONObject.NULL))

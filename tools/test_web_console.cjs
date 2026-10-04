@@ -261,10 +261,10 @@ const server = http.createServer(async (req, res) => {
         await page.locator('[data-tool="launch_app"]').click();
         await page.locator('#param-package_name').fill('ai.example.app');
         assert.equal(await page.locator('#param-package_name').getAttribute('placeholder'), 'Required · string');
-        nextResult = { state: 'failed', error: { code: 'PAUSED', message: 'Paused' } };
+        nextResult = { state: 'failed', error: { code: 'CANCELLED', message: 'Cancelled' } };
         await page.locator('#run').click();
         await page.waitForFunction(() => !document.getElementById('run').disabled);
-        assert.match(await page.locator('#result-status').textContent(), /Operation failed: Control is paused/);
+        assert.match(await page.locator('#result-status').textContent(), /Operation failed: The operation was cancelled/);
         assert.equal(calls.at(-1).tool, 'launch_app');
         assert.equal(calls.at(-1).arguments.package_name, 'ai.example.app');
         assert.ok(calls.at(-1).arguments.request_id);

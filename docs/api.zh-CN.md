@@ -63,7 +63,7 @@ HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保
 | 工具 | 参数 |
 | --- | --- |
 | get_capabilities | 无 |
-| get_status | 可选 request_id，只能查询本客户端结果；返回 paused、stopped、executing_request_id |
+| get_status | 可选 request_id，只能查询本客户端结果；返回 paused（兼容字段，始终为 false）、stopped、executing_request_id |
 | cancel | 可选 request_id，不传则取消本客户端所有未完成输入 |
 | observe | mode：tree / screenshot / both（默认）；max_dimension：320–2048，默认 1280；compact：默认 true；stable_wait_ms：0–2000，默认 0（不等待）；max_attempts：1–3，默认 3；timeout_ms、wait_until、output、diagnostics、include_details、region、subtree 见下文 |
 | acquire_device | 可选 ttl_ms：1000–300000，默认 60000；续期必须携带当前 lease_id |
@@ -86,7 +86,7 @@ HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保
 - `expected_window_id`：预期的活动窗口。
 - `observe_after`：动作后附带新观察，默认 false。
 - `observation_options`：复用 `observe` 的观察参数；仅在 `observe_after:true` 或 `observe_on_rejection:true` 时允许。不是动作目标参数，不能包含 request_id、device_id 等字段。
-- `observe_on_rejection`：默认 false；在目标校验类错误已经终止且确认 `action_executed:false` 时，按需附带 `recovery_observation`。暂停、撤销、停止等读取限制仍生效，附带观察错误不会覆盖原动作错误。
+- `observe_on_rejection`：默认 false；在目标校验类错误已经终止且确认 `action_executed:false` 时，按需附带 `recovery_observation`。撤销授权、服务销毁等读取限制仍生效，附带观察错误不会覆盖原动作错误。
 - `lease_id`：可选的开发者测试占用；设备有占用时必须匹配占用客户端和 ID。没有占用时可直接执行动作。
 
 所有工具可携带 `device_id`、`service_instance_id`，由 HTTP 入口在分发前核验。桥接自动添加这两个保护字段，直连 API 可自行指定。所有工具结果及嵌套动作/观察结果包含 `device_id` 和 `service_instance_id`。地址不匹配返回 `DEVICE_MISMATCH`，服务实例不匹配返回 `STALE_OBSERVATION`，均明确 `action_executed:false`。
@@ -182,15 +182,15 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 ## 授权、执行与去重
 
-配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权，暂停时观察/应用列表/等待被拒绝，状态与能力仍可查询。
+配对授权后可直接调用输入动作，无需申请或释放控制权。所有客户端的动作和即时读取共用单线程设备队列（最多排队 32 个），变化等待不占设备队列。只读请求也必须鉴权。
 
-连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。本地暂停、停止和撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
+连续开发测试可选用 `acquire_device` 取得最多五分钟的占用；有未完成动作时不能新建占用，避免接管中途动作。有效期内其他客户端或缺少正确 lease_id 的输入返回 DEVICE_RESERVED；过期、释放后的旧 lease_id 返回 LEASE_EXPIRED。入队及系统输入前都再次验证，排队期间过期的动作不会执行。占用不限制只读观察，不改变配对授权。服务销毁和本地撤销占用客户端立即清除占用；已注入动作可能完成。get_status.reservation 返回占用状态和剩余时间，不泄漏占用 ID。
 
-授权凭证持续有效，直到手机端撤销。暂停阻止新操作并取消排队输入，恢复后可直接提交新动作。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
+授权凭证持续有效，直到手机端撤销。撤销后阻止该客户端的新操作并取消其排队输入。进程和服务重启不重放请求；重新启动服务后仍须鉴权。
 
 动作只执行一次并返回执行事实，默认不采集动作后树或截图；观察缺省是正常成功结果。`launch_app` 额外检查无障碍活动窗口的包名，最多等待五秒确认目标应用进入前台；其他动作不增加隐式等待。`observe_after:true` 才附带观察，额外等待仍需在 observation_options 中明确请求。AI 决定调用顺序，有效引用可以连续使用，不要求每次动作后重新观察。
 
-`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。所有厂商均显示本地提醒，并另发一条应用启动通知，不受静音服务通知及其暂停／配对状态遮挡。点击通知打开首页；重复失败合并为一条，通知仍在时不反复响铃。后续启动确认成功或在 App 内关闭提醒时清除通知。通知是否送达取决于系统通知权限与渠道设置，通知被禁用不会改变原始启动结果。首页另在恢复显示时尝试读取小米／Redmi／POCO「后台弹出界面」权限，仅在未允许或上次启动未确认时显示指引；不支持检测时保持状态未知，不常驻提醒。设置页始终保留「其他权限」入口，打不开时回退应用详情。权限标志不能证明启动成功，启动未确认也不等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
+`launch_app` 仅在观察到目标包处于前台后返回 `execution.confirmation:"foreground_observed"`。超时返回 `state:"unknown"`、`error.code:"RESULT_UNKNOWN"`、`error.reason:"launch_not_confirmed"` 和 `action_executed:null`。请求已经发出，不自动重放；请检查应用加载、跳转确认弹窗或后台启动限制。所有厂商均显示本地提醒，并另发一条应用启动通知，不受静音服务通知及其配对状态遮挡。点击通知打开首页；重复失败合并为一条，通知仍在时不反复响铃。后续启动确认成功或在 App 内关闭提醒时清除通知。通知是否送达取决于系统通知权限与渠道设置，通知被禁用不会改变原始启动结果。首页另在恢复显示时尝试读取小米／Redmi／POCO「后台弹出界面」权限，仅在未允许或上次启动未确认时显示指引；不支持检测时保持状态未知，不常驻提醒。设置页始终保留「其他权限」入口，打不开时回退应用详情。权限标志不能证明启动成功，启动未确认也不等同于缺权限。发出请求后校验被中断仍为结果未知（`launch_confirmation_interrupted`）；Android 明确拒绝权限时返回 `ACTION_REJECTED`（`launch_permission_denied`）。启动确认不采集完整树或截图。
 
 动作最长同步等待 15 秒；尚未完成时返回 accepted（排队）或 executing（执行中）。继续查询 get_status，不把执行中当作成功。动作已执行但仍在等待观察时，顶层及 `get_status.request` 保持 `state:"executing"`、`action_executed:true`、`observation_status:"observing"`，`observation_purpose` 区分 after_action / after_rejection；未请求附带观察时省略 observation_status 和 observation_purpose。`accepted` 与 `action_executed:false` 同时出现只表示尚未执行，不能证明请求已经终止。终态：
 
@@ -208,7 +208,7 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 - cancelled：尚未执行的输入被取消或控制已失效。
 - unknown：应用启动未确认、手势回调超时、部分手势取消或无法判定执行结果的异常。先重新观察，不自动重试。
 
-执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因通知暂停而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
+执行成功但后续观察失败或条件超时仍返回 executed；observation 单独包含状态和错误。条件未满足的结果必须阻断依赖该条件的后续调用。已经注入的动作不会因取消请求而被伪装成撤销。cancel 返回 in_flight_may_complete；手势无法保证立即终止。
 
 `recovery` 是有限类别的建议对象，包含 category、advisory:true、replay_action:false、suggested_tool 和 message，不保证下一次操作成功。排队/执行中使用 wait_original_request；unknown 使用 reconcile_result；终态未执行的目标错误、执行后观察失败或条件超时使用 refresh_observation。先区分请求是否终止，再决定观察或查询原请求；不根据 action_executed:false 单独创建替代动作。恢复观察位于 recovery_observation，失败可再嵌套 last_observation。CLI/Web 递归识别这些层级，截图附件标明来源，历史截图不改变当前条件或错误。
 
@@ -222,11 +222,11 @@ condition.element_ids 用于说明内部匹配结果；节点动作仍只能引�
 
 重发相同 ID 返回已有结果，不再次输入，也不重新开展附带观察；不同参数返回 REQUEST_ID_CONFLICT。缓存观察的采集时间和有效期不会刷新，需要新观察时独立调用 observe。十分钟之后或进程重启后不能依据去重保证安全重放。客户端必须自行保留不确定请求，并重新观察。
 
-通知提供暂停/恢复和停止服务。暂停使排队输入失效，恢复不会重放已取消动作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。停止关闭 HTTP 入口，并使所有尚未执行输入失效。
+打开 App 后服务自动启动。通知显示服务状态并可打开 App，不再提供暂停、恢复或停止操作。撤销客户端凭证会拒绝其后续读写请求并取消其排队输入，不影响其他客户端。Android 销毁服务时关闭连接入口，并使所有尚未执行输入失效。
 
 ## 主要错误码
 
-INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、PAUSED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、OBSERVATION_TIMEOUT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
+INVALID_ARGUMENT、UNKNOWN_TOOL、UNAUTHORIZED、STOPPED、CANCELLED、BUSY、DEVICE_MISMATCH、DEVICE_RESERVED、LEASE_EXPIRED、REQUEST_ID_CONFLICT、REQUEST_NOT_FOUND、ACCESSIBILITY_UNAVAILABLE、SCREEN_OFF、DEVICE_LOCKED、NO_ACTIVE_WINDOW、OBSERVATION_INCONSISTENT、OBSERVATION_TIMEOUT、STALE_OBSERVATION、STALE_ELEMENT、WINDOW_MISMATCH、ELEMENT_UNAVAILABLE、ACTION_UNSUPPORTED、ACTION_REJECTED、APP_UNAVAILABLE、RESULT_UNKNOWN。OBSERVATION_INCONSISTENT（采集中变化）、STALE_OBSERVATION（动作上下文失效）、STALE_ELEMENT（目标变化）分别保留，便于批量汇总。
 
 ## MCP
 

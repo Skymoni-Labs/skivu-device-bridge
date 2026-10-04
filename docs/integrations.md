@@ -102,7 +102,7 @@ Rerun the Skill installation command to update it. npm may cache GitHub default-
 
 MCP and Skill share `~/.phoneuse.json` by default. npm cache changes do not remove phone authorization. Use separate `--config` paths for separate credentials. Never commit or distribute the registry. Access can be revoked on the phone.
 
-A cloud host without local execution or a route to your phone cannot use this bridge directly. If tools are missing, check stdio MCP support. If actions fail, check accessibility, lock state, and pause state. After a network interruption, query the original `request_id`; do not replay uncertain input.
+A cloud host without local execution or a route to your phone cannot use this bridge directly. If tools are missing, check stdio MCP support. If actions fail, check accessibility, lock state, and client authorization. After a network interruption, query the original `request_id`; do not replay uncertain input.
 
 ## Maintenance and offline packages
 

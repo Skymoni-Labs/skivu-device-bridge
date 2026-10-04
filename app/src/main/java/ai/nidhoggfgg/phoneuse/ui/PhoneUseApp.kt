@@ -32,7 +32,7 @@ import androidx.compose.ui.unit.dp
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhoneUseApp(
-    onStartService: () -> Unit,
+    onRetryService: () -> Unit,
     onAccessibilitySettings: () -> Unit,
     onOpenWebConsole: () -> Unit
 ) {
@@ -57,13 +57,13 @@ fun PhoneUseApp(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (settingsOpen) SettingsScreen()
-            else Dashboard(onStartService, onAccessibilitySettings, onOpenWebConsole)
+            else Dashboard(onRetryService, onAccessibilitySettings, onOpenWebConsole)
         }
     }
 }
 
 @Composable
-private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () -> Unit, onOpenWebConsole: () -> Unit) {
+private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () -> Unit, onOpenWebConsole: () -> Unit) {
     val context = LocalContext.current
     val identity = remember { DeviceIdentity(context.applicationContext) }
     val launchGuidance = remember { AppLaunchGuidance(context) }
@@ -80,11 +80,10 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
     }
     @Suppress("UNUSED_VARIABLE") val refresh = tick
     val service = PhoneUseService.current
-    val paused = service?.controller?.gate?.paused == true
-    val status = (service?.stateMessage() ?: R.string.service_stopped).let {
+    val serviceError = PhoneUseService.lastError
+    val status = (service?.stateMessage() ?: if (serviceError == null) R.string.service_starting else R.string.service_unavailable).let {
         if (it == R.string.launch_unconfirmed_notification) R.string.launch_unconfirmed_status else it
     }
-    val serviceError = PhoneUseService.lastError
     val accessibility = PhoneAccessibilityService.current != null
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -95,21 +94,14 @@ private fun Dashboard(onStartService: () -> Unit, onAccessibilitySettings: () ->
             Text(stringResource(R.string.control_service), style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.size(8.dp).background(
-                    if (service != null && !paused) MaterialTheme.colorScheme.primary
+                    if (service != null) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.outline, CircleShape
                 ))
                 Text(stringResource(status), style = MaterialTheme.typography.bodyMedium)
             }
-            if (service == null) {
-                Button(onClick = onStartService, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.start_http_service)) }
-                serviceError?.let { Text(stringResource(it.messageRes, it.detail), color = MaterialTheme.colorScheme.error) }
-            } else {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { service.setPaused(!service.controller.gate.paused); tick++ }) {
-                        Text(stringResource(if (paused) R.string.resume_control else R.string.pause_control))
-                    }
-                    OutlinedButton(onClick = { service.stopEndpoint(); tick++ }) { Text(stringResource(R.string.stop_service)) }
-                }
+            if (service == null && serviceError != null) {
+                Text(stringResource(serviceError.messageRes, serviceError.detail), color = MaterialTheme.colorScheme.error)
+                Button(onClick = onRetryService, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.retry_service)) }
             }
             HorizontalDivider()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {

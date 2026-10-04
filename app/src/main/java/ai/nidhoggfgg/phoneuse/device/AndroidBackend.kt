@@ -34,7 +34,6 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
         val width: Int, val height: Int, val rotation: Int, val created: Long,
         val nodes: Map<String, ElementReference>, val exported: Set<String>)
     private val snapshots = SnapshotStore<Snapshot>({ SystemClock.elapsedRealtime() })
-    private val localControlLabels by lazy { localControlLabels(context) }
     private val launchGuidance by lazy { AppLaunchGuidance(context) }
     private fun service() = PhoneAccessibilityService.current ?: fail("ACCESSIBILITY_UNAVAILABLE", "Enable Phone Use accessibility service")
     private fun ready(): PhoneAccessibilityService {
@@ -118,7 +117,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                         }
                     }
                 } catch (error: Exception) {
-                    if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                    if ((error as? DeviceError)?.code in setOf("CANCELLED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
                     readableTree = false
                     treeReason = (error as? DeviceError)?.code ?: "TREE_UNAVAILABLE"
                 } finally { root?.recycle() }
@@ -133,7 +132,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
                 val screenshot = if (mode != "tree") {
                     try { screenshot(service, maxDimension, budget, captureCheck) }
                     catch (error: Exception) {
-                        if ((error as? DeviceError)?.code in setOf("CANCELLED", "PAUSED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
+                        if ((error as? DeviceError)?.code in setOf("CANCELLED", "STOPPED", "UNAUTHORIZED", "ACCESSIBILITY_UNAVAILABLE", "OBSERVATION_TIMEOUT")) throw error
                         json("available" to false, "reason" to ((error as? DeviceError)?.code ?: "SCREENSHOT_UNAVAILABLE"))
                     }.put("started_at_ms", screenshotStarted).put("finished_at_ms", System.currentTimeMillis())
                 } else null
@@ -254,10 +253,7 @@ class AndroidBackend(private val context: Context, private val serviceInstanceId
             check()
             if (++examined > 1500 || depth > 40) fail("LOCAL_CONTROL_UI", "Local control protection could not finish within its budget")
             val own = node.packageName?.toString() == context.packageName
-            val label = node.text?.toString().orEmpty()
-            val description = node.contentDescription?.toString().orEmpty()
-            val local = own || localControlLabels.any { it.equals(label, ignoreCase = true) || it.equals(description, ignoreCase = true) }
-            if (local && (own || node.isVisibleToUser)) {
+            if (own) {
                 val bounds = Rect(); node.getBoundsInScreen(bounds)
                 if (points == null || pathIntersectsRegion(points, listOf(ScreenRect(bounds.left, bounds.top, bounds.right, bounds.bottom))))
                     fail("LOCAL_CONTROL_UI", "Phone Use authorization controls can only be operated locally")

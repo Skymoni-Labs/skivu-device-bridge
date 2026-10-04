@@ -66,14 +66,13 @@ class DeviceController(
         if (!authorized(client)) fail("UNAUTHORIZED", "Client credential was revoked")
     }
     private fun serialRead(client: String, name: String, args: JSONObject, checkTransport: () -> Unit): JSONObject {
-        if (gate.paused) fail("PAUSED", "Resume the service on the phone first")
         val generation = gate.generation
         val result = CompletableFuture<JSONObject>()
         try { executor.execute {
             try {
                 checkTransport()
                 checkAccess(client)
-                if (gate.paused || gate.generation != generation || result.isDone) fail("CANCELLED", "Read invalidated")
+                if (gate.generation != generation || result.isDone) fail("CANCELLED", "Read invalidated")
                 val check = {
                     checkTransport()
                     checkAccess(client)
@@ -85,7 +84,7 @@ class DeviceController(
                 checkAccess(client)
                 // A backend failure may include a valid earlier snapshot. Preserve it after cancellation,
                 // while a revoked credential or stopped service still cannot receive scene data.
-                if (!value.has("error") && (gate.paused || gate.generation != generation)) fail("CANCELLED", "Read invalidated")
+                if (!value.has("error") && gate.generation != generation) fail("CANCELLED", "Read invalidated")
                 if (name == "observe") { normalizeObservation(value); addRecovery(value) }
                 result.complete(value)
             } catch (e: Exception) { result.complete(if (name == "observe") observationFailure(e, args) else errorResult(e)) }
@@ -338,12 +337,11 @@ class DeviceController(
         // Queued reserved actions fail their lease check; an injected action may still complete.
         json("state" to "released", "in_flight_may_complete" to (active?.client == client))
     }
-    fun pause() { gate.pause(); synchronized(requests) { reservation = null }; cancelPending(); changed() }
-    fun resume() { gate.resume(); changed() }
     fun revokeClient(client: String) { synchronized(requests) { if (reservation?.client == client) reservation = null }; cancelPending(client); changed() }
     fun stop() { gate.stop(); synchronized(requests) { reservation = null }; cancelPending(); executor.shutdown(); changed() }
     fun status(client: String, id: String = ""): JSONObject {
-        val result = json("paused" to gate.paused, "stopped" to gate.stopped,
+        // Keep the legacy field for clients that read it; control is always available while running.
+        val result = json("paused" to false, "stopped" to gate.stopped,
             "executing_request_id" to active?.takeIf { it.client == client }?.id)
         synchronized(requests) {
             val lease = currentReservation()

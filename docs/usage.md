@@ -52,11 +52,11 @@ The CLI omits image base64 by default, keeping image dimensions and coordinate m
 
 `batch @calls.json` and MCP `phoneuse_batch` accept explicit calls, each with `device_id`, `tool`, and `arguments`. Calls execute in order on each device and independently across devices. By default, a failed or unfinished step stops subsequent calls on that device. `--summary-only` returns aggregate results. Batches do not plan tasks, fill in observation IDs, or retry actions.
 
-For controlled tests, `acquire_device` creates a time-limited reservation. Pass its `lease_id` with actions and call `release_device` when finished. Normal actions need no reservation when the device is unreserved. Local pause and stop always remain available. See the [API reference](api.md) for execution states and retention limits.
+For controlled tests, `acquire_device` creates a time-limited reservation. Pass its `lease_id` with actions and call `release_device` when finished. Normal actions need no reservation when the device is unreserved. Client access can always be revoked on the phone. See the [API reference](api.md) for execution states and retention limits.
 
 ## Service and pairing persistence
 
-The app remembers whether the service was enabled and paused. Reopening the app restores an enabled service; stopping it explicitly prevents automatic startup on the next app open. Force-stop, reboot, and vendor battery policies may require reopening the app. Completed pairings remain, but inputs are never automatically replayed.
+Opening the app automatically starts the service on port 8443. The dashboard and notification show service status without start, pause, or stop controls. Older saved pause or stop settings are ignored. Force-stop, reboot, and vendor battery policies may require reopening the app. Completed pairings remain, but inputs are never automatically replayed.
 
 Deleting the client configuration, clearing app data, uninstalling the phone app, clearing browser cookies, or revoking access requires pairing again. A stable phone address simplifies browser access. MCP and Skill use the same registry by default; different `--config` paths keep their credentials separate.
 
@@ -74,11 +74,11 @@ Then connect with `python tools/phoneuse_client.py pair --url https://127.0.0.1:
 
 Update both the phone and bridge. Existing HTTP addresses are migrated locally to HTTPS, but their old credentials are discarded; compare a new code and pair again. A changed TLS key is never automatically accepted. After independently verifying a deliberate reinstall/reset, revoke the old phone client and use `python tools/phoneuse_client.py forget-device --device-id DEVICE_ID` before re-pairing.
 
-If input is unavailable, check accessibility, screen lock, pause state, and client authorization. If the AI host runs in the cloud and cannot reach your LAN or run a local bridge, installing the integration alone will not provide access.
+If input is unavailable, check accessibility, screen lock, and client authorization. If the AI host runs in the cloud and cannot reach your LAN or run a local bridge, installing the integration alone will not provide access.
 
 ## Languages and device names
 
-App settings offer System default, 中文, and English. The selection persists on Android 11+ and integrates with Android's app-language settings on Android 13+. Notifications follow the selection. Changing language does not reset the service, pause state, or pairings. Android itself controls how the accessibility-service description is displayed in system settings.
+App settings offer System default, 中文, and English. The selection persists on Android 11+ and integrates with Android's app-language settings on Android 13+. Notifications follow the selection. Changing language does not reset the service or pairings. Android itself controls how the accessibility-service description is displayed in system settings.
 
 The default device name uses the system device name where available, then brand and model; emulators use a readable fallback. Vendor APIs may return model codes rather than marketing names. A custom name takes precedence and changes neither the system device name nor installation ID.
 

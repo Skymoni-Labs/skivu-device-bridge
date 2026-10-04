@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可通过通知栏随时暂停或停止服务。</string>
+    <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可随时在 App 中撤销客户端授权。</string>
     <string name="device_name">设备名称</string>
     <string name="save_name">保存名称</string>
     <string name="device_emulator">模拟器</string>
     <string name="device_physical">实体设备</string>
     <string name="device_id">设备 ID：%1$s</string>
     <string name="device_identity_help">设备 ID 随安装保留，IP 地址变化不影响配对身份。</string>
-    <string name="service_stopped">服务未启动</string>
-    <string name="keep_unlocked">操作时请保持亮屏并解锁。可随时通过通知栏暂停或停止。</string>
+    <string name="service_unavailable">服务不可用</string>
+    <string name="keep_unlocked">操作时请保持亮屏并解锁。可随时在 App 中撤销客户端授权。</string>
     <string name="background_launch_title">后台启动应用</string>
     <string name="background_launch_allowed">已允许后台弹出界面。</string>
     <string name="background_launch_denied">尚未允许后台弹出界面。</string>
@@ -24,13 +24,10 @@
     <string name="open_launch_settings">打开权限设置</string>
     <string name="dismiss_launch_warning">关闭提醒</string>
     <string name="launch_settings_unavailable">无法打开设置，请在系统设置中进入 Phone Use 的应用详情检查权限。</string>
-    <string name="start_http_service">启动服务</string>
-    <string name="resume_control">恢复控制</string>
-    <string name="pause_control">暂停控制</string>
-    <string name="stop_service">停止服务</string>
+    <string name="retry_service">重试连接</string>
     <string name="connection_pairing">连接与配对</string>
     <string name="connection_help">在同一网络通过 MCP 或 Python 客户端连接，逐位核对八位码后在此批准。本机 Web 控制台使用 HTTP，同样受访问地址白名单限制；远程 HTTPS 浏览器访问需要单独信任证书。</string>
-    <string name="pairing_persistence_help">每个客户端只需配对一次。重启 App 后自动恢复已启用的服务；暂停状态和配对记录都会保留。</string>
+    <string name="pairing_persistence_help">每个客户端只需配对一次。打开 App 后服务自动启动，配对记录会保留。</string>
     <string name="open_web_console">打开 Web 控制台</string>
     <string name="pairing_requests">配对请求</string>
     <string name="pairing_source">来源：%1$s · 名称由客户端提供</string>
@@ -46,12 +43,8 @@
     <string name="http_start_failed">HTTPS 启动失败：%1$s</string>
     <string name="client_storage_failed">客户端存储初始化失败：%1$s</string>
     <string name="service_pairing_pending">收到配对请求 · 点击打开 App 授权</string>
-    <string name="service_paused">控制已暂停</string>
     <string name="service_recent_request">客户端最近有请求 · 服务可用</string>
     <string name="service_available">服务可用，等待连接</string>
-    <string name="notification_resume">Phone Use：恢复</string>
-    <string name="notification_pause">Phone Use：暂停</string>
-    <string name="notification_stop">Phone Use：停止服务</string>
     <string name="device_name_invalid">设备名称必须包含 1–80 个可打印字符。</string>
     <string name="device_name_save_failed">无法保存设备名称，请重试。</string>
     <string name="pairing_approval_failed">无法保存客户端授权，请重试。</string>

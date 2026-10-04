@@ -26,7 +26,6 @@ class PhoneUseService : Service() {
         private set
     private var server: HttpServer? = null
     private var starting = false
-    private val settings by lazy { getSharedPreferences("service_state", MODE_PRIVATE) }
     private val connectionSettings by lazy { ConnectionSettings(this) }
     private val launchGuidance by lazy { AppLaunchGuidance(this) }
     private val connectionListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -42,6 +41,7 @@ class PhoneUseService : Service() {
     }
     override fun onCreate() {
         super.onCreate()
+        lastError = null
         connectionSettings.preferences.registerOnSharedPreferenceChangeListener(connectionListener)
         createNotificationChannel()
         val startingText = ContextCompat.getContextForLanguage(this).getString(R.string.service_starting)
@@ -58,26 +58,8 @@ class PhoneUseService : Service() {
         updateNotification(force = true)
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            PAUSE -> setPaused(true)
-            RESUME -> setPaused(false)
-            STOP -> stopEndpoint()
-            else -> {
-                settings.edit().putBoolean("enabled", true).apply()
-                if (server == null && !starting) startEndpoint()
-            }
-        }
-        return if (settings.getBoolean("enabled", false)) START_STICKY else START_NOT_STICKY
-    }
-    fun setPaused(paused: Boolean) {
-        settings.edit().putBoolean("paused", paused).apply()
-        if (::controller.isInitialized) {
-            if (paused) controller.pause() else controller.resume()
-        }
-    }
-    fun stopEndpoint() {
-        settings.edit().putBoolean("enabled", false).apply()
-        stopSelf()
+        if (server == null && !starting) startEndpoint()
+        return START_STICKY
     }
     private fun startEndpoint() {
         starting = true
@@ -91,7 +73,6 @@ class PhoneUseService : Service() {
                     controller = DeviceController(AndroidBackend(this, serviceInstanceId = serviceInstanceId), SystemClock::elapsedRealtime, identities::exists) {
                         handler.post { if (!destroyed) updateNotification() }
                     }
-                    if (settings.getBoolean("paused", false)) controller.pause()
                     try {
                         server = HttpServer(identities, controller, assets, serviceInstanceId,
                             allowInsecureHttp = connectionSettings.allowInsecureHttp, allowedHosts = { connectionSettings.allowedHosts }) { client ->
@@ -121,7 +102,6 @@ class PhoneUseService : Service() {
         if (!::controller.isInitialized) return R.string.service_starting
         return when {
             identities.pairing.pending().isNotEmpty() -> R.string.service_pairing_pending
-            controller.gate.paused -> R.string.service_paused
             launchGuidance.unconfirmedPackage != null -> R.string.launch_unconfirmed_notification
             lastClient != null && SystemClock.elapsedRealtime() - lastContact < 60_000 -> R.string.service_recent_request
             else -> R.string.service_available
@@ -132,7 +112,7 @@ class PhoneUseService : Service() {
         // resources explicitly so a running or independently restored service uses the same language.
         val localized = ContextCompat.getContextForLanguage(this)
         val text = localized.getString(stateMessage())
-        val key = "${localized.resources.configuration.locales.toLanguageTags()}:$text:${::controller.isInitialized && controller.gate.paused}"
+        val key = "${localized.resources.configuration.locales.toLanguageTags()}:$text"
         if (!force && notificationText == key) return
         notificationText = key
         createNotificationChannel()
@@ -141,13 +121,9 @@ class PhoneUseService : Service() {
     private fun notification(text: String): Notification {
         val localized = ContextCompat.getContextForLanguage(this)
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        fun action(action: String, code: Int) = PendingIntent.getService(this, code, Intent(this, PhoneUseService::class.java).setAction(action), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val paused = ::controller.isInitialized && controller.gate.paused
         return NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_control)
             .setContentTitle(localized.getString(R.string.app_name)).setContentText(text).setContentIntent(open).setOngoing(true)
-            .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .addAction(0, localized.getString(if (paused) R.string.notification_resume else R.string.notification_pause), action(if (paused) RESUME else PAUSE, 1))
-            .addAction(0, localized.getString(R.string.notification_stop), action(STOP, 3)).build()
+            .setOnlyAlertOnce(true).setSilent(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build()
     }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onDestroy() {
@@ -164,9 +140,6 @@ class PhoneUseService : Service() {
     data class ServiceError(val messageRes: Int, val detail: String)
     companion object {
         const val CHANNEL = "phone_use_control"
-        const val PAUSE = "phoneuse.PAUSE"
-        const val RESUME = "phoneuse.RESUME"
-        const val STOP = "phoneuse.STOP"
         @Volatile var current: PhoneUseService? = null
             private set
         @Volatile var lastError: ServiceError? = null

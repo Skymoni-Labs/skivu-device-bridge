@@ -12,7 +12,7 @@ Phone Use runs an observation and control service on Android 11+. It exposes acc
 - **Interact with apps:** tap, long-press, swipe, scroll, replace or insert text, launch apps, and use Back, Home, or Recents.
 - **Connect your preferred client:** use the built-in web console, Python CLI, MCP bridge, or `phone-use` Skill.
 - **Use multiple devices:** route every call by device ID; different devices can run independently.
-- **Keep control on the phone:** approve each client locally, revoke access, and pause or stop the service from the notification.
+- **Keep control on the phone:** approve each client locally and revoke access at any time.
 
 The app supports English and Simplified Chinese, with a system-language option. The web console follows the browser language and falls back to English.
 
@@ -37,7 +37,7 @@ Install `app/build/outputs/apk/debug/app-debug.apk` on Android 11 or later. See 
 ### 2. Start the phone service
 
 1. Open Phone Use and enable its accessibility service in Android settings. Some devices require allowing restricted settings for a sideloaded app first.
-2. Start the service and allow notifications. On Android 17+, grant local network permission when requested.
+2. The service starts automatically on port 8443 when you open the app. Allow notifications, and on Android 17+, grant local network permission when requested.
 3. Keep the phone awake and unlocked for input. Connect your client machine to a network that can reach the IPv4 address shown in the app.
 
 On Xiaomi/Redmi/POCO, Phone Use checks the background pop-up permission when the screen resumes. The dashboard shows **Background app launches** when the permission is denied or a launch was not confirmed. If the firmware does not support checking, the dashboard only shows a reminder after an unconfirmed launch. **Settings → Background app launches** always provides a manual entry to system permissions; permission changes must be made there. On every brand, a denied or unconfirmed launch also posts a separate notification that opens Phone Use. Repeated failures update one notification; a confirmed launch or dismissing the in-app reminder clears it.

@@ -35,7 +35,7 @@ android {
         buildConfig = true
     }
     bundle {
-        // Local notification protection needs every translated action label, even after a locale change.
+        // Keep translated notifications available after an app language change.
         language { enableSplit = false }
     }
 }

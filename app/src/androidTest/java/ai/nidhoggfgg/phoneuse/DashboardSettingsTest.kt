@@ -35,13 +35,10 @@ class DashboardSettingsTest {
     @get:Rule val compose = createEmptyComposeRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
-    private val servicePreferences = context.getSharedPreferences("service_state", Context.MODE_PRIVATE)
     private val identityPreferences = context.getSharedPreferences("device_identity", Context.MODE_PRIVATE)
     private lateinit var scenario: ActivityScenario<MainActivity>
     private lateinit var originalLocales: LocaleListCompat
     private var originalName: String? = null
-    private var originalEnabled = false
-    private var originalPaused = false
     private val connections = ai.nidhoggfgg.phoneuse.server.ConnectionSettings(context)
     private var originalHttp = false
     private var originalAllowedHosts = emptyList<String>()
@@ -49,15 +46,12 @@ class DashboardSettingsTest {
     @Before fun launch() {
         originalLocales = LocaleManagerCompat.getApplicationLocales(context)
         originalName = identityPreferences.getString("name", null)
-        originalEnabled = servicePreferences.getBoolean("enabled", false)
-        originalPaused = servicePreferences.getBoolean("paused", false)
         originalHttp = connections.allowInsecureHttp
         originalAllowedHosts = connections.allowedHosts
         connections.allowInsecureHttp = false
         connections.allowedHosts = emptyList()
         context.stopService(Intent(context, PhoneUseService::class.java))
         compose.waitUntil(10_000) { PhoneUseService.current == null }
-        servicePreferences.edit().putBoolean("enabled", false).putBoolean("paused", false).commit()
         val permissions = buildList {
             if (Build.VERSION.SDK_INT >= 33) add("android.permission.POST_NOTIFICATIONS")
             if (Build.VERSION.SDK_INT >= 37) add("android.permission.ACCESS_LOCAL_NETWORK")
@@ -70,20 +64,34 @@ class DashboardSettingsTest {
         scenario = ActivityScenario.launch(MainActivity::class.java)
         instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en")) }
         waitForText("This device")
+        compose.waitUntil(10_000) { PhoneUseService.current != null }
+        waitForText("Connection and pairing")
     }
 
     @After fun restore() {
-        context.stopService(Intent(context, PhoneUseService::class.java))
-        compose.waitUntil(10_000) { PhoneUseService.current == null }
         instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(originalLocales) }
         instrumentation.waitForIdleSync()
         scenario.close()
+        context.stopService(Intent(context, PhoneUseService::class.java))
+        compose.waitUntil(10_000) { PhoneUseService.current == null }
         identityPreferences.edit().apply {
             if (originalName == null) remove("name") else putString("name", originalName)
         }.commit()
-        servicePreferences.edit().putBoolean("enabled", originalEnabled).putBoolean("paused", originalPaused).commit()
         connections.allowInsecureHttp = originalHttp
         connections.allowedHosts = originalAllowedHosts
+    }
+
+    @Test fun dashboardShowsRunningServiceWithoutStartPauseOrStopButtons() {
+        for (label in listOf("Start service", "Pause control", "Resume control", "Stop service")) {
+            compose.onNodeWithText(label).assertDoesNotExist()
+        }
+        compose.onNodeWithText("Connection and pairing").performScrollTo().assertIsDisplayed()
+        instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+        waitForText("本机")
+        for (label in listOf("启动服务", "暂停控制", "恢复控制", "停止服务")) {
+            compose.onNodeWithText(label).assertDoesNotExist()
+        }
+        assertNotNull(PhoneUseService.current)
     }
 
     @Test fun deviceNameEditsAreExplicitValidatedAndPersistWithoutChangingIdentity() {
@@ -121,7 +129,6 @@ class DashboardSettingsTest {
         val guidance = AppLaunchGuidance(context)
         val original = guidance.unconfirmedPackage
         try {
-            compose.onNodeWithText("Start service").performClick()
             compose.waitUntil(10_000) { PhoneUseService.current != null }
             guidance.recordUnconfirmed("com.example.target")
             compose.waitUntil(5_000) {
@@ -162,8 +169,9 @@ class DashboardSettingsTest {
         try {
             guidance.clearWarning()
             // No control service or visible activity is needed to deliver the reminder.
-            assertNull(PhoneUseService.current)
             scenario.moveToState(Lifecycle.State.CREATED)
+            context.stopService(Intent(context, PhoneUseService::class.java))
+            compose.waitUntil(10_000) { PhoneUseService.current == null }
             guidance.recordUnconfirmed("com.example.first")
             compose.waitUntil(5_000) { manager.activeNotifications.any { it.id == AppLaunchNotifications.ID } }
             val first = manager.activeNotifications.single { it.id == AppLaunchNotifications.ID }.notification
@@ -192,14 +200,12 @@ class DashboardSettingsTest {
         }
     }
 
-    @Test fun launchNotificationUsesChineseAndRemainsVisibleWhileControlIsPaused() {
+    @Test fun launchNotificationUsesChineseAlongsideRunningService() {
         val guidance = AppLaunchGuidance(context)
         val original = guidance.unconfirmedPackage
         val manager = context.getSystemService(NotificationManager::class.java)
         try {
-            compose.onNodeWithText("Start service").performClick()
             compose.waitUntil(10_000) { PhoneUseService.current != null }
-            PhoneUseService.current!!.setPaused(true)
             instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
             waitForText("本机")
             guidance.recordUnconfirmed("com.example.target")
@@ -209,10 +215,12 @@ class DashboardSettingsTest {
                         "Phone Use：请检查应用启动"
                 }
             }
-            assertEquals(R.string.service_paused, PhoneUseService.current!!.stateMessage())
+            assertEquals(R.string.launch_unconfirmed_notification, PhoneUseService.current!!.stateMessage())
             guidance.clearWarning()
             compose.waitUntil(5_000) { manager.activeNotifications.none { it.id == AppLaunchNotifications.ID } }
-            assertTrue(manager.activeNotifications.any { it.notification.channelId == PhoneUseService.CHANNEL })
+            compose.waitUntil(15_000) {
+                manager.activeNotifications.any { it.notification.channelId == PhoneUseService.CHANNEL }
+            }
         } finally {
             if (original == null) guidance.clearWarning() else guidance.recordUnconfirmed(original)
         }
@@ -237,7 +245,6 @@ class DashboardSettingsTest {
     }
 
     @Test fun languageSwitchKeepsSettingsOpenAndPreservesRunningServiceAndPairing() {
-        compose.onNodeWithText("Start service").performClick()
         compose.waitUntil(10_000) { PhoneUseService.current != null }
         val service = PhoneUseService.current!!
         val pairing = service.identities.pairing.create("Settings test client", "localhost")
@@ -247,8 +254,6 @@ class DashboardSettingsTest {
             compose.onNodeWithText("Approve").performScrollTo().performClick()
             val credential = service.identities.pairing.poll(pairing.getString("pairing_id"), pairing.getString("pairing_secret"))
             clientId = credential.getString("client_id")
-            compose.onNodeWithText("Pause control").performScrollTo().performClick()
-            compose.waitUntil(5_000) { service.controller.gate.paused }
             compose.onNodeWithContentDescription("Settings").performClick()
             screenshot("settings-en")
             compose.onNodeWithText("中文").performClick()
@@ -256,11 +261,12 @@ class DashboardSettingsTest {
             compose.onNodeWithText("中文").assertIsSelected()
             screenshot("settings-zh")
             assertSame(service, PhoneUseService.current)
-            assertTrue(service.controller.gate.paused)
+            assertFalse(service.controller.status(clientId!!).getBoolean("paused"))
             assertEquals(clientId, service.identities.authenticate(credential.getString("token")))
             compose.waitUntil(10_000) {
                 context.getSystemService(NotificationManager::class.java).activeNotifications.any { notification ->
-                    notification.notification.actions?.any { it.title.toString() == "Phone Use：恢复" } == true
+                    notification.id == 1 && notification.notification.extras.getString(android.app.Notification.EXTRA_TEXT) ==
+                        "服务可用，等待连接"
                 }
             }
             scenario.recreate()
@@ -299,7 +305,6 @@ class DashboardSettingsTest {
             socket.outputStream.write("GET /identity HTTP/1.1\r\nHost: $host:8443\r\n\r\n".toByteArray())
             socket.inputStream.bufferedReader().readLine().split(' ')[1].toInt()
         }
-        compose.onNodeWithText("Start service").performClick()
         compose.waitUntil(10_000) { PhoneUseService.current != null }
         val running = PhoneUseService.current
         assertEquals(200, status("127.0.0.1"))

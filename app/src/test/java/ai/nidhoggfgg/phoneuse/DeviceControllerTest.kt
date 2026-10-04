@@ -77,15 +77,14 @@ class DeviceControllerTest {
             assertFalse(controller.call("a", "get_status", JSONObject()).has("control_owner"))
         } finally { controller.stop() }
     }
-    @Test fun pauseInvalidatesGenerationEvenAfterResume() {
+    @Test fun serviceDestructionInvalidatesPendingWork() {
         val gate = ControlGate()
         val generation = gate.generation
-        gate.pause()
-        assertThrows(DeviceError::class.java) { gate.check() }
-        gate.resume()
+        gate.check(generation)
+        gate.stop()
+        assertTrue(gate.stopped)
+        assertNotEquals(generation, gate.generation)
         assertThrows(DeviceError::class.java) { gate.check(generation) }
-        gate.check()
-        gate.stop(); gate.resume()
         assertThrows(DeviceError::class.java) { gate.check() }
     }
     @Test fun reservationsAreOptionalAndLegacyControlToolsStayRemoved() {
@@ -119,7 +118,7 @@ class DeviceControllerTest {
             assertEquals("unknown", controller.call("a", "get_status", json("request_id" to "one")).getJSONObject("request").getString("state"))
         } finally { controller.stop() }
     }
-    @Test fun pauseCancelsQueuedActionButReportsCompletedInFlightAction() {
+    @Test fun serviceDestructionCancelsQueuedActionButReportsCompletedInFlightAction() {
         val backend = Backend().apply { entered = CountDownLatch(1); release = CountDownLatch(1) }
         val controller = DeviceController(backend, { 100L }, { true })
         val threads = Executors.newFixedThreadPool(2)
@@ -129,13 +128,12 @@ class DeviceControllerTest {
             val second = threads.submit<JSONObject> { controller.call("a", "back", action("two")) }
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
             while (controller.call("a", "get_status", json("request_id" to "two")).has("error") && System.nanoTime() < deadline) Thread.yield()
-            controller.pause()
+            controller.stop()
             backend.release!!.countDown()
             assertEquals("executed", first.get(2, TimeUnit.SECONDS).getString("state"))
             assertEquals("cancelled", second.get(2, TimeUnit.SECONDS).getString("state"))
-            controller.resume()
-            assertEquals("executed", controller.call("a", "back", action("late")).getString("state"))
-            assertEquals(2, backend.calls.get())
+            assertEquals("STOPPED", controller.call("a", "back", action("late")).getJSONObject("error").getString("code"))
+            assertEquals(1, backend.calls.get())
         } finally { backend.release!!.countDown(); controller.stop(); threads.shutdownNow() }
     }
     @Test fun revokedCredentialCannotReadOrAct() {
@@ -158,7 +156,7 @@ class DeviceControllerTest {
     }
     @Test fun stopRejectsLateRequestsAndCannotBeResumed() {
         val controller = DeviceController(Backend(), { 100L }, { true })
-        controller.stop(); controller.resume()
+        controller.stop()
         assertEquals("STOPPED", controller.call("a", "home", action("late")).getJSONObject("error").getString("code"))
     }
     private fun awaitQueued(controller: DeviceController, client: String, id: String) {
@@ -269,12 +267,9 @@ class DeviceControllerTest {
             assertEquals(2, backend.calls.get())
         } finally { controller.stop() }
     }
-    @Test fun localPauseAndRevocationOverrideReservations() {
+    @Test fun localRevocationOverridesReservations() {
         val controller = DeviceController(Backend(), { 100L }, { true })
         try {
-            controller.call("a", "acquire_device", JSONObject())
-            controller.pause(); controller.resume()
-            assertEquals("executed", controller.call("b", "home", action("after-pause")).getString("state"))
             controller.call("a", "acquire_device", JSONObject())
             controller.revokeClient("a")
             assertEquals("executed", controller.call("b", "home", action("after-revoke")).getString("state"))

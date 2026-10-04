@@ -1,7 +1,6 @@
 package ai.nidhoggfgg.phoneuse
 
 import android.Manifest
-import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -19,9 +18,7 @@ import ai.nidhoggfgg.phoneuse.ui.theme.ThemePreference
 import ai.nidhoggfgg.phoneuse.server.ConnectionAddresses
 
 class MainActivity : AppCompatActivity() {
-    private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
-        if (grants.values.all { it }) startEndpoint()
-    }
+    private val permission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(ThemePreference.read(this))
@@ -30,25 +27,30 @@ class MainActivity : AppCompatActivity() {
         setContent {
             PhoneUseTheme {
                 PhoneUseApp(
-                    onStartService = ::startEndpoint,
+                    onRetryService = ::startEndpoint,
                     onAccessibilitySettings = { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
                     onOpenWebConsole = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(ConnectionAddresses.LOCAL_CONSOLE))) }
                 )
             }
         }
-        if (getSharedPreferences("service_state", MODE_PRIVATE).getBoolean("enabled", false)) startEndpoint()
+        requestConnectionPermissions()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        startEndpoint()
     }
 
     private fun startEndpoint() {
+        startForegroundService(Intent(this, PhoneUseService::class.java))
+    }
+
+    private fun requestConnectionPermissions() {
         val permissions = mutableListOf<String>()
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
         if (Build.VERSION.SDK_INT >= 37 && checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK") != PackageManager.PERMISSION_GRANTED)
             permissions.add("android.permission.ACCESS_LOCAL_NETWORK")
-        if (permissions.isNotEmpty()) { permission.launch(permissions.toTypedArray()); return }
-        if (!getSystemService(NotificationManager::class.java).areNotificationsEnabled()) {
-            startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)); return
-        }
-        startForegroundService(Intent(this, PhoneUseService::class.java))
+        if (permissions.isNotEmpty()) permission.launch(permissions.toTypedArray())
     }
 }

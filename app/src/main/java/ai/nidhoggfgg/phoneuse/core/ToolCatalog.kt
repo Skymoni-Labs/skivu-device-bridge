@@ -130,7 +130,7 @@ object ToolCatalog {
         tool("get_capabilities", "Read Android capability availability and limitations"),
         tool("get_status", "Read control state or the retained result of an action", mapOf("request_id" to string("Optional action to query"))),
         tool("cancel", "Cancel queued actions; an in-flight action may still complete", mapOf("request_id" to string("Omit to cancel all pending actions for this client"))),
-        tool("acquire_device", "Optionally reserve this device for a bounded test sequence; local pause and stop always override", mapOf("ttl_ms" to integer("1000..300000, default 60000"), "lease_id" to string("Current reservation ID to renew"))),
+        tool("acquire_device", "Optionally reserve this device for a bounded test sequence; local client revocation always overrides", mapOf("ttl_ms" to integer("1000..300000, default 60000"), "lease_id" to string("Current reservation ID to renew"))),
         tool("release_device", "Release this client's developer reservation", mapOf("lease_id" to string("Reservation to release")), listOf("lease_id")),
         tool("observe", "Capture current state immediately; nodes default to decision output. Optional explicit bounded waits may match package and exact elements. Channels report availability separately; tree and screenshot are not atomic", observationFields()),
         tool("list_apps", "List discoverable launchable applications"),
