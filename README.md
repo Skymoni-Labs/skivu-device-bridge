@@ -22,6 +22,8 @@ The app supports English and Simplified Chinese, with a system-language option. 
 
 You need **JDK 25** and an Android SDK installation with **API 37**. The repository pins Gradle **9.7.1** and Android Gradle Plugin **9.4.0**. Configure your SDK in Android Studio or an untracked `local.properties` file.
 
+Run `git submodule update --init --recursive` before building to obtain the bundled Skill. The build packages the current client, API references, and Skill instructions into the APK automatically.
+
 ```sh
 # macOS / Linux
 ./gradlew :app:assembleDebug
@@ -54,7 +56,9 @@ Pairing persists across client and app restarts until revoked or its stored cred
 
 ## Connect an AI agent
 
-For installation through GitHub, use **Node.js 22.20+**, **Git**, and **Python 3.10+**. The AI host must be able to run local programs and reach the phone. Choose either integration:
+The recommended route is **Copy AI setup link** in the phone app. Give the link to your AI and ask it to connect. It reads `/connect`, downloads the complete Skill from the same port, verifies and installs it, then starts pairing. Compare all eight digits, approve on the phone, and explicitly confirm the match to the AI. Only **Python 3.10+** is needed; no npx, Node.js, Git, or Internet download. The Skill updates with the app.
+
+The AI host must run programs and reach the phone's address; a cloud-only chat cannot directly reach a phone on your LAN. GitHub installation remains available with **Node.js 22.20+**, **Git**, and **Python 3.10+**:
 
 ### Agent Skill
 

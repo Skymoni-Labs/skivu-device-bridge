@@ -36,7 +36,20 @@ HTTP uses a separate `phoneuse_http_client_PORT` cookie without Secure, with the
 
 The console checks connections at startup, focus, and network recovery. Failed startup session reads retry every five seconds while preserving pairing. Inputs never retry automatically. The console no longer exports long-term credentials; older exported configurations can still be used by Python.
 
-### Persistent AI connections
+### App-bundled Skill distribution
+
+The same listener serves these read-only routes without pairing:
+
+| Path (GET) | Content |
+| --- | --- |
+| `/connect` | Plain-text Markdown onboarding for AI clients, including the current HTTPS origin |
+| `/skills/manifest.json` | `schema_version`, `name`, `app_version`, `distribution:bundled`, archive `sha256`/`size`, `archive`, `entrypoint`, `skill`, and hash-bearing `connect_url` |
+| `/skills/phone-use.zip` | Complete `phone-use/` directory with the Python client, Skill instructions, and API references; an `application/zip` attachment |
+| `/skills/phone-use/SKILL.md` | The same instructions contained in the archive |
+
+Only GET is supported; other methods return 405. `/connect` permits external navigation like the home page. Downloads retain same-origin checks; all routes enforce the host allowlist and HTTP setting. Only fixed packaged files are served, without credentials or control authorization. The manifest does not include device identity. The app's shared link includes `#sha256=...` for archive verification; fragments are not sent to the server. The bundled Skill updates with the app and does not query the Internet for updates.
+
+### Persistent AI connections and identity
 
 `python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` can initialize before pairing or while offline. One bridge manages multiple devices. `phoneuse_connect` adds by address or reconnects by `device_id`; `phoneuse_list_devices` reports installation ID, name, model, Android version, address, online status, and emulator status. Every device call must specify `device_id`; there is no shared current device. Paired tools are exposed directly; `phoneuse_call` is a fallback for hosts that do not refresh their tool list.
 

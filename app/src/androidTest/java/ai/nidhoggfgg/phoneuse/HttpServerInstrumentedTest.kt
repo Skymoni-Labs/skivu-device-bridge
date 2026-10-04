@@ -88,6 +88,7 @@ class HttpServerInstrumentedTest {
         var controller = DeviceController(AndroidBackend(context), SystemClock::elapsedRealtime, identity::exists) {}
         var server = HttpServer(identity, controller, context.assets) {}
         var responseHeaders = ""
+        var responseBytes = ByteArray(0)
         fun request(path: String, body: JSONObject? = null, token: String? = null, site: String = "same-origin", cookie: String? = null): Pair<Int, String> {
             return tlsSocket(identity, 18443).use { socket ->
                 socket.soTimeout = 10_000
@@ -99,8 +100,10 @@ class HttpServerInstrumentedTest {
                     (if (body != null) "Content-Type: application/json\r\nContent-Length: ${bytes.size}\r\n" else "") + "\r\n"
                 socket.outputStream.write(header.toByteArray(Charsets.US_ASCII))
                 socket.outputStream.write(bytes); socket.outputStream.flush()
-                val response = socket.inputStream.readBytes().toString(Charsets.UTF_8)
+                val raw = socket.inputStream.readBytes()
+                val response = raw.toString(Charsets.UTF_8)
                 responseHeaders = response.substringBefore("\r\n\r\n")
+                responseBytes = raw.copyOfRange(responseHeaders.toByteArray(Charsets.UTF_8).size + 4, raw.size)
                 response.substringBefore("\r\n").split(' ')[1].toInt() to response.substringAfter("\r\n\r\n")
             }
         }
@@ -122,6 +125,32 @@ class HttpServerInstrumentedTest {
             assertEquals(200, translations.first)
             assertTrue(translations.second.contains("PhoneUseI18n"))
             assertEquals(200, request("/", site = "cross-site").first)
+            val onboarding = request("/connect", site = "cross-site")
+            assertEquals(200, onboarding.first)
+            assertTrue(onboarding.second.contains("https://127.0.0.1:18443/skills/phone-use.zip"))
+            val manifest = JSONObject(request("/skills/manifest.json").second)
+            assertFalse(manifest.has("token"))
+            assertFalse(manifest.has("device_id"))
+            assertEquals(200, request(manifest.getString("archive")).first)
+            assertTrue(responseHeaders.contains("Content-Type: application/zip"))
+            assertTrue(responseHeaders.contains("Content-Disposition: attachment; filename=\"phone-use.zip\""))
+            assertTrue(responseHeaders.contains("Content-Length: ${responseBytes.size}\r\n"))
+            assertEquals(manifest.getInt("size"), responseBytes.size)
+            assertEquals(manifest.getString("sha256"), PairingCrypto.hash(responseBytes))
+            val entries = mutableMapOf<String, ByteArray>()
+            java.util.zip.ZipInputStream(responseBytes.inputStream()).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    if (!entry.isDirectory) entries[entry.name] = zip.readBytes()
+                }
+            }
+            assertTrue(entries.keys.containsAll(listOf("phone-use/SKILL.md", "phone-use/scripts/phoneuse_client.py", "phone-use/references/api.md")))
+            assertEquals(9, entries.size)
+            assertEquals(200, request(manifest.getString("skill")).first)
+            assertArrayEquals(entries.getValue("phone-use/SKILL.md"), responseBytes)
+            assertEquals(405, request("/skills/phone-use.zip", JSONObject()).first)
+            assertEquals(403, request("/skills/manifest.json", site = "cross-site").first)
+            assertEquals(404, request("/skills/../identity").first)
             assertEquals(403, request("/pair/request", json("client_name" to "cross-site"), site = "cross-site").first)
             assertEquals(401, request("/api/tools").first)
             val publicIdentity = JSONObject(request("/identity").second)

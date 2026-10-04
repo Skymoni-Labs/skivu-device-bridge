@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="copy_ai_link">复制 AI 接入链接</string>
+    <string name="ai_link_help">将链接发给 AI，即可从手机下载 Skill；核对配对码后在这里批准，无需 npx。</string>
     <string name="accessibility_description">允许已配对的外部客户端读取当前屏幕与界面元素，并执行点击、输入和导航。请保持手机亮屏且已解锁，可随时在 App 中撤销客户端授权。</string>
     <string name="device_name">设备名称</string>
     <string name="save_name">保存名称</string>

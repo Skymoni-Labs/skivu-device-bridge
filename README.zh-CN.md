@@ -22,6 +22,8 @@ App 支持英文、简体中文和跟随系统；Web 控制台跟随浏览器语
 
 准备 **JDK 25** 和包含 **API 37** 的 Android SDK。仓库固定使用 Gradle **9.7.1** 和 Android Gradle Plugin **9.4.0**。通过 Android Studio 或不提交到仓库的 `local.properties` 配置 SDK 路径。
 
+构建前运行 `git submodule update --init --recursive`，获取随 APK 分发的 Skill。构建会自动将当前客户端、接口参考与 Skill 指引打包到 App。
+
 ```sh
 # macOS / Linux
 ./gradlew :app:assembleDebug
@@ -53,7 +55,9 @@ App 支持英文、简体中文和跟随系统；Web 控制台跟随浏览器语
 
 ## 接入 AI
 
-通过 GitHub 安装需准备 **Node.js 22.20+**、**Git** 和 **Python 3.10+**。AI 宿主须能运行本地程序并访问手机地址。可选择以下任一方式：
+推荐在 App 中点击 **复制 AI 接入链接**，将链接发给 AI 并让它连接手机。AI 会读取 `/connect` 指引，从同一端口下载完整 Skill，校验、安装后发起配对。用户核对八位码并在手机批准，再明确告诉 AI 核对一致即可继续。只需 **Python 3.10+**，无需 npx、Node.js、Git 或联网下载；Skill 随 App 更新。
+
+AI 宿主必须能执行程序并访问手机地址；普通云端聊天无法直接访问手机局域网。原有 GitHub 安装仍可使用，需要 **Node.js 22.20+**、**Git** 和 **Python 3.10+**：
 
 ### Agent Skill
 

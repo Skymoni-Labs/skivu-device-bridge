@@ -38,7 +38,20 @@ HTTP 使用独立的 `phoneuse_http_client_PORT` Cookie，不设置 Secure，保
 
 页面启动、重新获得焦点和网络恢复时检查连接；启动连接失败每五秒重试读取会话，保留配对。任何输入动作都不自动重试。网页不再导出长期凭证，旧 HTTP 导出凭证不可复用，必须重新配对。
 
-### AI 的持久连接
+### App 内置 Skill 分发
+
+同一个服务端口提供以下只读、无需配对的接口：
+
+| 路径（GET） | 内容 |
+| --- | --- |
+| `/connect` | AI 可直接读取的纯文本 Markdown 接入指引，包含当前 HTTPS 源地址 |
+| `/skills/manifest.json` | `schema_version`、`name`、`app_version`、`distribution:bundled`、ZIP 的 `sha256`/`size`、`archive`、`entrypoint`、`skill` 和带哈希的 `connect_url` |
+| `/skills/phone-use.zip` | 完整 `phone-use/` 目录，包含 Python 客户端、Skill 指令和接口参考；`application/zip` 附件 |
+| `/skills/phone-use/SKILL.md` | 与 ZIP 内一致的 Skill 指令预览 |
+
+只接受 GET，其他方法返回 405。`/connect` 与首页一样允许外部导航；下载仍应用同源检查，所有路由均应用地址白名单与 HTTP 开关。分发固定打包文件，不提供任意文件读取，不返回凭证或授予手机操作权限。清单不附加设备身份；App 分享链接中的 `#sha256=...` 用于校验 ZIP，片段不会发送给服务器。技能版本随 App 更新，不查询互联网最新版本。
+
+### AI 的持久连接与身份
 
 `python tools/phoneuse_client.py mcp-stdio --url https://PHONE:8443` 在未配对或手机离线时也可处理 initialize。一个桥接管理多台设备；`phoneuse_connect` 按地址添加或按 `device_id` 重连，`phoneuse_list_devices` 返回安装级 ID、名称、型号、Android 版本、地址、在线状态和模拟器标记。后续每次设备调用必须显式指定 `device_id`，不维护共享“当前设备”。`phoneuse_call` 是未刷新列表宿主的备用调用入口；配对后也直接提供手机工具。
 

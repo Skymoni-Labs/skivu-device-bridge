@@ -99,6 +99,29 @@ class DashboardSettingsTest {
         assertNotNull(PhoneUseService.current)
     }
 
+    @Test fun aiSetupLinkUsesSelectedHttpsAddressAndBundledArchiveHash() {
+        connections.allowInsecureHttp = true
+        connections.allowedHosts = listOf("phone.example", "2001:db8::1")
+        compose.waitUntil(5_000) {
+            compose.onAllNodesWithText("https://phone.example:8443", substring = true).fetchSemanticsNodes().isNotEmpty()
+        }
+        compose.onNodeWithText("Copy AI setup link").performScrollTo().performClick()
+        compose.onNode(hasText("https://[2001:db8::1]:8443") and hasClickAction()).performClick()
+        val hash = context.assets.open("phone-use.zip").use {
+            ai.nidhoggfgg.phoneuse.server.PairingCrypto.hash(it.readBytes())
+        }
+        instrumentation.runOnMainSync {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            assertEquals("https://[2001:db8::1]:8443/connect#sha256=$hash",
+                clipboard.primaryClip!!.getItemAt(0).text.toString())
+        }
+        screenshot("ai-setup-en")
+        instrumentation.runOnMainSync { AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh")) }
+        waitForText("复制 AI 接入链接")
+        compose.onNodeWithText("复制 AI 接入链接").performScrollTo().assertIsDisplayed()
+        screenshot("ai-setup-zh")
+    }
+
     @Test fun deviceNameEditsAreExplicitValidatedAndPersistWithoutChangingIdentity() {
         val identity = DeviceIdentity(context)
         val originalId = identity.id

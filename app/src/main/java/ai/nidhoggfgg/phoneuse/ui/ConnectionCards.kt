@@ -1,10 +1,15 @@
 package ai.nidhoggfgg.phoneuse.ui
 
 import android.os.SystemClock
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import ai.nidhoggfgg.phoneuse.BuildConfig
 import ai.nidhoggfgg.phoneuse.PhoneUseService
 import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.server.ConnectionAddresses
 import ai.nidhoggfgg.phoneuse.server.ConnectionSettings
+import ai.nidhoggfgg.phoneuse.server.SkillDistribution
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -22,6 +27,9 @@ import java.net.NetworkInterface
 internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
     val context = LocalContext.current
     val settings = remember(context) { ConnectionSettings(context) }
+    val skills = remember(context) {
+        SkillDistribution({ context.assets.open(it).use { stream -> stream.readBytes() } }, BuildConfig.VERSION_NAME)
+    }
     val addresses = remember(tick / 10) {
         runCatching {
             NetworkInterface.getNetworkInterfaces().toList().filter { it.isUp }
@@ -36,9 +44,17 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
     val (ipv6Urls, primaryUrls) = urls.partition { it.substringAfter("://").startsWith("[") }
     var ipv6Open by rememberSaveable { mutableStateOf(false) }
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
+    var chooseAiAddress by remember { mutableStateOf(false) }
+    val aiOrigins = urls.filter { it.startsWith("https://") }
+    val aiLinkLabel = stringResource(R.string.copy_ai_link)
+    fun copyAiLink(origin: String) {
+        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText(aiLinkLabel, skills.connectUrl(origin)))
+        chooseAiAddress = false
+    }
     SectionCard {
         Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.connection_help), style = MaterialTheme.typography.bodyMedium,
+        Text(stringResource(R.string.ai_link_help), style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (urls.isEmpty()) {
             Text(stringResource(R.string.no_network_address), style = MaterialTheme.typography.bodyMedium)
@@ -60,6 +76,18 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         if (!localConsoleAllowed) Text(stringResource(R.string.local_console_blocked),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Box {
+                Button(onClick = {
+                    if (aiOrigins.size == 1) copyAiLink(aiOrigins.single()) else chooseAiAddress = true
+                }, enabled = aiOrigins.isNotEmpty() && PhoneUseService.current != null) {
+                    Text(aiLinkLabel)
+                }
+                DropdownMenu(expanded = chooseAiAddress, onDismissRequest = { chooseAiAddress = false }) {
+                    aiOrigins.forEach { origin ->
+                        DropdownMenuItem(text = { Text(origin) }, onClick = { copyAiLink(origin) })
+                    }
+                }
+            }
             OutlinedButton(onClick = onOpenWebConsole, enabled = localConsoleAllowed) { Text(stringResource(R.string.open_web_console)) }
             TextButton(onClick = { detailsOpen = !detailsOpen }) {
                 Text(stringResource(if (detailsOpen) R.string.hide_details else R.string.connection_details))
@@ -67,6 +95,8 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
         }
         if (detailsOpen) {
             HorizontalDivider()
+            Text(stringResource(R.string.connection_help), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             SelectionContainer { Text("API: /api · MCP: /mcp", style = MaterialTheme.typography.bodySmall) }
             Text(stringResource(R.string.pairing_persistence_help), style = MaterialTheme.typography.bodySmall)
         }

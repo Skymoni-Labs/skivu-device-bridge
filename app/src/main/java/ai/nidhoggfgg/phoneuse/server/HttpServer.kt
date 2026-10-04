@@ -24,6 +24,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     private val allowedHosts: () -> List<String> = { emptyList() },
     private val connected: (String) -> Unit) {
     private val transportPolicy = HttpTransportPolicy(allowInsecureHttp)
+    private val skills = SkillDistribution({ assets.open(it).use { stream -> stream.readBytes() } }, BuildConfig.VERSION_NAME)
     private val workers = ThreadPoolExecutor(8, 8, 0, TimeUnit.SECONDS, ArrayBlockingQueue(16))
     private val clients = ConcurrentHashMap.newKeySet<Socket>()
     private val deadlines = java.util.concurrent.ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = true }
@@ -62,7 +63,7 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
     }
     private data class Response(val status: Int, val body: JSONObject? = null,
         val text: String? = null, val contentType: String = "application/json; charset=utf-8", val allow: String = "POST",
-        val cookie: String? = null)
+        val cookie: String? = null, val bytes: ByteArray? = null, val filename: String? = null)
     private fun cookieName(port: Int, secure: Boolean) = if (secure) "phoneuse_client_$port" else "phoneuse_http_client_$port"
     private fun cookie(token: String, port: Int, secure: Boolean) =
         "${cookieName(port, secure)}=$token; Path=/; ${if (secure) "Secure; " else ""}HttpOnly; SameSite=Strict; Max-Age=${if (token.isEmpty()) 0 else 34_560_000}"
@@ -127,12 +128,22 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
             val checkTransport = { checkConnection(); checkRequestTransport() }
             val path = request[1]
             // Android ACTION_VIEW launches can mark the public landing page as cross-site.
-            // Only GET / is public navigation; scripts, pairing and API still require same origin.
+            // Landing pages allow external navigation; pairing and API still require same origin.
             if (!BrowserAccess.allowed(headers, socket.localAddress.hostAddress.orEmpty(), socket.localPort,
-                    publicPage = request[0] == "GET" && path == "/", secure = secure, allowedHosts = allowedHosts())) {
+                    publicPage = request[0] == "GET" && path in setOf("/", "/connect"), secure = secure, allowedHosts = allowedHosts())) {
                 throw HttpError(403, "Use an address permitted by the phone's access address allowlist and the service port; cross-origin access is not allowed")
             }
             checkTransport()
+            if (path in SkillDistribution.paths) {
+                if (request[0] != "GET") {
+                    write(socket, Response(405, json("error" to "Only GET is supported"), allow = "GET"))
+                } else {
+                    // Host has already passed the allowlist; clients always pair over HTTPS.
+                    val resource = requireNotNull(skills.resource(path, "https://${headers.getValue("host")}"))
+                    write(socket, Response(200, bytes = resource.bytes, contentType = resource.contentType, filename = resource.filename))
+                }
+                return
+            }
             if (request[0] == "GET" && path in setOf("/", "/app.js", "/i18n.js")) {
                 val file = if (path == "/") "index.html" else path.removePrefix("/")
                 val type = if (path == "/") "text/html; charset=utf-8" else "text/javascript; charset=utf-8"
@@ -319,11 +330,12 @@ class HttpServer(private val identities: IdentityStore, private val controller: 
 
     private fun write(socket: Socket, response: Response) {
         val body = response.body?.let { if (it.has("jsonrpc")) it else resultIdentity(it) }
-        val bytes = (response.text ?: body?.toString())?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
+        val bytes = response.bytes ?: (response.text ?: body?.toString())?.toByteArray(Charsets.UTF_8) ?: ByteArray(0)
         val reason = when (response.status) { 200 -> "OK"; 202 -> "Accepted"; 401 -> "Unauthorized"; 403 -> "Forbidden"; 404 -> "Not Found"; 405 -> "Method Not Allowed"; else -> "Error" }
         val headers = "HTTP/1.1 ${response.status} $reason\r\nContent-Type: ${response.contentType}\r\nContent-Length: ${bytes.size}\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n" +
             "Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'\r\nReferrer-Policy: no-referrer\r\n" +
             (if (response.status == 405) "Allow: ${response.allow}\r\n" else "") +
+            (response.filename?.let { "Content-Disposition: attachment; filename=\"$it\"\r\n" } ?: "") +
             (response.cookie?.let { "Set-Cookie: $it\r\n" } ?: "") + "\r\n"
         socket.outputStream.write(headers.toByteArray(Charsets.US_ASCII))
         socket.outputStream.write(bytes); socket.outputStream.flush()

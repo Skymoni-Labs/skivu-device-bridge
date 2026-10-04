@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="copy_ai_link">Copy AI setup link</string>
+    <string name="ai_link_help">Give this link to your AI to install the Skill directly from this phone, then compare the pairing code and approve here. No npx needed.</string>
     <string name="app_name" translatable="false">Phone Use</string>
     <string name="accessibility_description">Allow paired external clients to read the screen and UI elements, and perform taps, text input, and navigation. Keep the phone awake and unlocked. You can revoke client access in the app at any time.</string>
     <string name="device_name">Device name</string>
