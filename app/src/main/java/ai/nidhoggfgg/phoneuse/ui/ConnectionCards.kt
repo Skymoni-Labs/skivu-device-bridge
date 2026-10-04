@@ -44,7 +44,7 @@ internal fun ConnectionCard(tick: Int, onOpenWebConsole: () -> Unit) {
     val (ipv6Urls, primaryUrls) = urls.partition { it.substringAfter("://").startsWith("[") }
     var ipv6Open by rememberSaveable { mutableStateOf(false) }
     var detailsOpen by rememberSaveable { mutableStateOf(false) }
-    AiConnectionCard(urls.filter { it.startsWith("https://") })
+    AiConnectionCard((primaryUrls + ipv6Urls).filter { it.startsWith("https://") })
     SectionCard {
         Text(stringResource(R.string.connection_pairing), style = MaterialTheme.typography.titleMedium)
         if (urls.isEmpty()) {
@@ -103,8 +103,6 @@ private fun AiConnectionCard(origins: List<String>) {
 
     SectionCard {
         Text(stringResource(R.string.ai_connection_title), style = MaterialTheme.typography.titleMedium)
-        Text(stringResource(R.string.ai_connection_help), style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
         ExposedDropdownMenuBox(expanded = addressesOpen, onExpandedChange = {
             if (origins.isNotEmpty()) addressesOpen = !addressesOpen
         }) {
@@ -127,6 +125,8 @@ private fun AiConnectionCard(origins: List<String>) {
             }
         }
         if (prompt != null) {
+            Text(stringResource(R.string.ai_connection_help), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             Surface(shape = MaterialTheme.shapes.medium, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Row(Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, end = 4.dp, bottom = 8.dp),
                     verticalAlignment = Alignment.Top) {
