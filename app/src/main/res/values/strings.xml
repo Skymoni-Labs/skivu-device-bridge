@@ -65,6 +65,7 @@
     <string name="accessibility_core_permission">Core permission</string>
     <string name="accessibility_ready">Enabled · Ready for device actions</string>
     <string name="accessibility_needed">Not enabled · Device actions unavailable</string>
+    <string name="accessibility_enable_help">In system accessibility settings, find Phone Use under Downloaded apps or Installed services, then turn on the service and confirm.</string>
     <string name="enable">Enable</string>
     <string name="manage">Manage</string>
     <string name="connection_details">Connection details</string>

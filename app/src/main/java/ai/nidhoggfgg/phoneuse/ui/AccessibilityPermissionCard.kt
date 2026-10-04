@@ -78,6 +78,11 @@ internal fun AccessibilityPermissionCard(enabled: Boolean, onOpenSettings: () ->
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }
             )
             if (!enabled) {
+                Text(
+                    stringResource(R.string.accessibility_enable_help),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Button(
                     onClick = onOpenSettings,
                     modifier = Modifier.fillMaxWidth(),

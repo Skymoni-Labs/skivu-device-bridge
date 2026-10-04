@@ -64,6 +64,7 @@
     <string name="accessibility_core_permission">核心权限</string>
     <string name="accessibility_ready">已开启，可操作设备</string>
     <string name="accessibility_needed">未开启，无法操作设备</string>
+    <string name="accessibility_enable_help">在系统无障碍设置中，找到「已下载的应用」或「已安装的服务」，选择「Phone Use」，开启服务并确认。</string>
     <string name="enable">去开启</string>
     <string name="manage">管理</string>
     <string name="connection_details">连接详情</string>
