@@ -8,6 +8,7 @@ import ai.nidhoggfgg.phoneuse.R
 import ai.nidhoggfgg.phoneuse.core.DeviceError
 import ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService
 import ai.nidhoggfgg.phoneuse.device.AppLaunchGuidance
+import ai.nidhoggfgg.phoneuse.device.KeepAliveSettings
 import ai.nidhoggfgg.phoneuse.server.DeviceIdentity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -57,16 +58,22 @@ fun PhoneUseApp(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (settingsOpen) SettingsScreen(onKeepAliveChanged = onRetryService)
-            else Dashboard(onRetryService, onAccessibilitySettings, onOpenWebConsole)
+            else Dashboard(onRetryService, onAccessibilitySettings, onOpenWebConsole, onOpenSettings = { settingsOpen = true })
         }
     }
 }
 
 @Composable
-private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () -> Unit, onOpenWebConsole: () -> Unit) {
+private fun Dashboard(
+    onRetryService: () -> Unit,
+    onAccessibilitySettings: () -> Unit,
+    onOpenWebConsole: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     val context = LocalContext.current
     val identity = remember { DeviceIdentity(context.applicationContext) }
     val launchGuidance = remember { AppLaunchGuidance(context) }
+    val keepAlive = remember(context) { KeepAliveSettings(context) }
     var tick by remember { mutableIntStateOf(0) }
     var editingName by rememberSaveable { mutableStateOf(false) }
     DisposableEffect(Unit) {
@@ -85,6 +92,7 @@ private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () ->
         if (it == R.string.launch_unconfirmed_notification) R.string.launch_unconfirmed_status else it
     }
     val accessibility = PhoneAccessibilityService.current != null
+    val keepAliveEnabled = keepAlive.enabled
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -106,6 +114,21 @@ private fun Dashboard(onRetryService: () -> Unit, onAccessibilitySettings: () ->
             }
             Text(stringResource(R.string.keep_unlocked), style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            HorizontalDivider()
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    stringResource(if (keepAliveEnabled) R.string.keep_alive_status_enabled else R.string.keep_alive_status_disabled),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (keepAliveEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.keep_alive_settings)) }
+            }
+            Text(
+                stringResource(if (keepAliveEnabled) R.string.keep_alive_dashboard_enabled_help else R.string.keep_alive_dashboard_disabled_help),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         AppLaunchCard(launchGuidance.unconfirmedPackage, onDismiss = { launchGuidance.clearWarning(); tick++ })
         if (service != null) {
