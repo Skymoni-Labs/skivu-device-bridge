@@ -18,9 +18,23 @@ object BridgeRegistry {
     val pending = java.util.concurrent.ConcurrentHashMap<String, Client>()
     val confirmations = java.util.concurrent.ConcurrentHashMap<String, Confirmation>()
     @Volatile var service: BridgeService? = null
-    fun approve(context: Context, key: String) {
+    fun approve(context: Context, key: String, direct: Boolean = false) {
         val client = pending.remove(key) ?: return
-        context.getSharedPreferences("skivu-client-grants-v1", 0).edit().putBoolean(client.key, true).apply()
+        context.getSharedPreferences("skivu-client-grants-v1", 0).edit().putBoolean(client.key, true)
+            .putBoolean("direct-control:${client.key}",direct).apply()
+    }
+    fun approvedClients(context: Context) = context.getSharedPreferences("skivu-client-grants-v1",0).all.entries
+        .filter { it.value==true && !it.key.startsWith("direct-control:") && it.key.contains(":") }
+        .map { Client(it.key,-1,it.key.substringBefore(":"),it.key.substringAfter(":")) }.sortedBy { it.packageName }
+    fun directApproved(context: Context,key: String) = context.getSharedPreferences("skivu-client-grants-v1",0).getBoolean(key,false) &&
+        context.getSharedPreferences("skivu-client-grants-v1",0).getBoolean("direct-control:$key",false)
+    fun setDirect(context:Context,key:String,value:Boolean) {
+        context.getSharedPreferences("skivu-client-grants-v1",0).edit().putBoolean("direct-control:$key",value).apply()
+        if(!value)service?.revokeOwner(key)
+    }
+    fun revoke(context:Context,key:String) {
+        context.getSharedPreferences("skivu-client-grants-v1",0).edit().remove(key).remove("direct-control:$key").apply()
+        service?.revokeOwner(key)
     }
     fun revokeAll(context: Context) {
         context.getSharedPreferences("skivu-client-grants-v1", 0).edit().clear().apply()
@@ -59,6 +73,10 @@ class BridgeService : Service() {
         BridgeRegistry.service = this
     }
     private fun approved(key: String) = getSharedPreferences("skivu-client-grants-v1", 0).getBoolean(key, false)
+    private fun status(client:BridgeRegistry.Client)=json("protocol" to 1,"serviceInstanceId" to instance,
+        "approved" to approved(client.key),"packageName" to packageName,
+        "directControlApproved" to BridgeRegistry.directApproved(this,client.key),
+        "accessibilityEnabled" to (PhoneAccessibilityService.current!=null))
     @Suppress("DEPRECATION") private fun identify(uid: Int): BridgeRegistry.Client {
         val packages = packageManager.getPackagesForUid(uid) ?: fail("UNAUTHORIZED", "Unknown Android caller")
         if (packages.size != 1) fail("UNAUTHORIZED", "Shared UID clients are not supported")
@@ -73,11 +91,11 @@ class BridgeService : Service() {
         val client = identify(uid)
         val method = request.string("method", 80)
         val args = request.optJSONObject("params") ?: JSONObject()
-        if (method == "hello") return json("protocol" to 1, "serviceInstanceId" to instance, "approved" to approved(client.key), "packageName" to packageName)
+        if (method == "hello") return status(client)
         if (method == "pair") {
             if(!approved(client.key) && !BridgeRegistry.pending.containsKey(client.key) && BridgeRegistry.pending.size>=16)fail("BUSY","Too many pending client approvals")
             if (!approved(client.key)) BridgeRegistry.pending[client.key] = client
-            return json("approved" to approved(client.key), "requiresLocalApproval" to !approved(client.key))
+            return status(client).put("requiresLocalApproval",!approved(client.key))
         }
         if (!approved(client.key)) fail("UNAUTHORIZED", "Approve this client in the device companion")
         if (method == "capabilities") return backend.capabilities().put("protocol", 1)
@@ -91,7 +109,7 @@ class BridgeService : Service() {
             tasks.values.removeIf { it.revoked || SystemClock.elapsedRealtime() >= it.expires }
             observations.keys.removeIf { !tasks.containsKey(it) }
             if (tasks.isNotEmpty()) fail("DEVICE_BUSY", "Another task owns the device")
-            val policy = BridgePolicy(client.key, args) { SystemClock.elapsedRealtime() }
+            val policy = BridgePolicy(client.key, args, { SystemClock.elapsedRealtime() }, BridgeRegistry.directApproved(this,client.key))
             if (packageName in policy.apps || client.packageName in policy.apps) fail("APP_OUT_OF_SCOPE", "The controller and approval UI cannot be automation targets")
             tasks[policy.id] = policy
             json("taskCapability" to policy.id, "serviceInstanceId" to instance, "expiresInMs" to (policy.expires - SystemClock.elapsedRealtime()))
@@ -106,6 +124,7 @@ class BridgeService : Service() {
         fun scope() {
             policy.check(client.key)
             if (!approved(client.key)) fail("UNAUTHORIZED", "Client was revoked")
+            if(policy.directControl && !BridgeRegistry.directApproved(this,client.key))fail("TASK_REVOKED","Direct control trust was revoked")
             if (name == "launch_app") policy.checkApp(input.string("package_name"))
             else if (name !in setOf("get_status", "cancel")) {
                 val root = PhoneAccessibilityService.current?.rootInActiveWindow
@@ -125,7 +144,7 @@ class BridgeService : Service() {
                 if (candidate.optString("element_id") == input.optString("element_id")) node = candidate
             }
             if(name == "input_text" && node?.optBoolean("password",false) == true) fail("LOCAL_INPUT_REQUIRED","Password fields must be completed locally by the user")
-            if (BridgePolicy.requiresConfirmation(name, input, node)) {
+            if (!policy.directControl && BridgePolicy.requiresConfirmation(name, input, node)) {
                 val signature = name + canonical(input)
                 val key = "${policy.id}:$rid"
                 val confirmation = BridgeRegistry.confirmations[key]
@@ -158,6 +177,16 @@ class BridgeService : Service() {
             } }) } catch(_:Exception){}
         }
         identities.keys.forEach { controller.revokeClient(it) }; tasks.clear(); observations.clear()
+    }
+    fun revokeOwner(owner:String) {
+        tasks.values.filter { it.owner==owner }.forEach { policy ->
+            policy.revoked=true;tasks.remove(policy.id);observations.remove(policy.id)
+            BridgeRegistry.confirmations.entries.removeIf { it.value.task==policy.id }
+            try { callbacks[owner]?.send(Message.obtain(null,2).apply { data=Bundle().apply {
+                putString("json",json("event" to "revoked","taskCapability" to policy.id).toString())
+            } }) } catch(_:Exception){}
+        }
+        controller.revokeClient(owner)
     }
     fun targetFor(task: String): String? = observations[task]?.optString("package_name")?.takeIf { it in (tasks[task]?.apps ?: emptySet()) }
     fun notifyApproved(owner: String, task: String) { workers.execute {

@@ -4,14 +4,15 @@ package ai.nidhoggfgg.phoneuse.bridge
 import ai.nidhoggfgg.phoneuse.core.*
 import org.json.JSONObject
 
-class BridgePolicy(val owner: String, raw: JSONObject, private val now: () -> Long) {
+class BridgePolicy(val owner: String, raw: JSONObject, private val now: () -> Long, directApproved: Boolean = false) {
+    val directControl = directMode(raw.optBoolean("directControl",false),directApproved)
     val id = java.util.UUID.randomUUID().toString()
     val apps: Set<String>
     val expires: Long
     val limit: Int
     var actions = 0
         private set
-    var revoked = false
+    @Volatile var revoked = false
     private val dispatched = mutableSetOf<String>()
     init {
         val list = raw.optJSONArray("allowedPackages") ?: fail("INVALID_ARGUMENT", "Choose target apps")
@@ -31,6 +32,10 @@ class BridgePolicy(val owner: String, raw: JSONObject, private val now: () -> Lo
         dispatched.add(requestId); actions++
     }
     companion object {
+        fun directMode(requested: Boolean, approved: Boolean): Boolean {
+            if(requested && !approved)fail("DIRECT_APPROVAL_REQUIRED","Trust direct control locally before starting this mode")
+            return requested && approved
+        }
         val sensitive = Regex("发送|发表|发布|支付|付款|购买|下单|删除|清空|转账|授权|允许|同意|安装|卸载|确认交易|send|publish|pay|purchase|buy|delete|remove|allow|authorize|install|uninstall|submit", RegexOption.IGNORE_CASE)
         fun requiresConfirmation(name: String, args: JSONObject, node: JSONObject?): Boolean {
             if (name == "tap" || name == "long_press") {

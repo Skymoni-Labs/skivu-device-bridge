@@ -25,7 +25,7 @@ Discover services with action `org.skivu.devicebridge.V1`; bind explicitly to a 
 
 Methods: `hello`, `pair`, `capabilities`, `list_apps`, `begin`, `call`, `end`. All operations except `hello/pair` require manual client approval. `begin` accepts exact `allowedPackages`, a maximum action count and expiry; it returns a process-scoped task capability. `call` requires that capability and preserves upstream request IDs and observation references. Revocation invalidates active tasks. One task owns device input at a time.
 
-Sensitive-label, coordinate and unlabeled tap requests require local one-shot approval. Labels cannot reliably identify every dangerous action; only bounded, explicitly approved tasks should run. Authorization UI and the controller app cannot be task targets. Unknown receipts require human reconciliation, never a replacement request that silently replays an operation.
+Version0.2 adds explicit local direct-control trust. A task requesting `directControl:true` requires that trust for the actual caller UID and signing certificate. Once trusted, in-scope sensitive-label, coordinate and unlabeled taps do not ask again. Existing grants retain one-shot confirmation until the user explicitly enables direct control. Password input remains local. Trust can be revoked per client or globally, invalidating active tasks immediately. Authorization UI and the controller app cannot be task targets. Unknown receipts require human reconciliation, never a replacement request that silently replays an operation.
 
 Default screenshots/trees and action arguments remain in process memory. No model key or Skymoni credential is accepted by the companion. Supported-model inference belongs to the host's existing guarded path.
 

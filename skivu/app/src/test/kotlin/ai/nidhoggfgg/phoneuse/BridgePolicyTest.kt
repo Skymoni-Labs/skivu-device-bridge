@@ -5,6 +5,12 @@ import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
 class BridgePolicyTest {
+    @Test fun directModeRequiresSeparateLocalTrust() {
+        assertThrows(DeviceError::class.java){BridgePolicy.directMode(true,false)}
+        assertTrue(BridgePolicy.directMode(true,true))
+        assertFalse(BridgePolicy.directMode(false,true))
+        assertFalse(BridgePolicy.directMode(false,false))
+    }
     private fun policy(now: () -> Long = { 0 }) = BridgePolicy("client", JSONObject("""{"allowedPackages":["org.example.notes"],"maxActions":1,"timeoutMs":1000}"""), now)
     @Test fun unknownClientCannotUseTask() { assertThrows(DeviceError::class.java) { policy().check("other") } }
     @Test fun expirationAndRevocationAreEnforced() { var now=0L;val p=policy { now };p.check("client");now=1000;assertThrows(DeviceError::class.java){p.check("client")} }

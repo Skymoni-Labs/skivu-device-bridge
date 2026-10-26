@@ -1,7 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
-    <application android:label="Skivu 设备伴侣" android:icon="@mipmap/ic_phone_use" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+    <application android:label="Skivu 设备伴侣" android:icon="@mipmap/ic_phone_use" android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/skivu_data_extraction_rules" android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity android:name="ai.nidhoggfgg.phoneuse.MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
