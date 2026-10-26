@@ -68,7 +68,14 @@ class MainActivity : Activity() {
             }
         }
         button("立即停止并撤销所有客户端") { BridgeRegistry.revokeAll(this); render() }
-        text("基于 PhoneUse v1.3.0（MIT），保留原作者许可。Skivu 独立伴侣构建 0.2.0。", 12f)
+        text("基于 PhoneUse v1.3.0（MIT），保留原作者许可。Skivu 独立伴侣构建 0.2.1。", 12f)
+        button("查看开源许可") {
+            val notice = assets.open("THIRD-PARTY-NOTICES.txt").bufferedReader().use { it.readText() }
+            val content = TextView(this).apply { text = notice; setPadding(32,24,32,24) }
+            android.app.AlertDialog.Builder(this).setTitle("开源许可")
+                .setView(ScrollView(this).apply { addView(content) })
+                .setPositiveButton("返回",null).show()
+        }
         setContentView(ScrollView(this).apply { addView(box) })
     }
 }
