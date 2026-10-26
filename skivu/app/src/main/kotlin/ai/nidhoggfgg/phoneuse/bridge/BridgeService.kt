@@ -86,6 +86,7 @@ class BridgeService : Service() {
         }
         if (method == "begin") return serial.submit<JSONObject> {
             tasks.values.removeIf { it.revoked || SystemClock.elapsedRealtime() >= it.expires }
+            observations.keys.removeIf { !tasks.containsKey(it) }
             if (tasks.isNotEmpty()) fail("DEVICE_BUSY", "Another task owns the device")
             val policy = BridgePolicy(client.key, args) { SystemClock.elapsedRealtime() }
             if (packageName in policy.apps || client.packageName in policy.apps) fail("APP_OUT_OF_SCOPE", "The controller and approval UI cannot be automation targets")
@@ -94,7 +95,7 @@ class BridgeService : Service() {
         }.get()
         val policy = tasks[args.string("taskCapability", 128)] ?: fail("TASK_REVOKED", "Task no longer exists")
         policy.check(client.key)
-        if (method == "end") { policy.revoked = true; controller.revokeClient(client.key); tasks.remove(policy.id); BridgeRegistry.confirmations.entries.removeIf { it.value.task == policy.id }; return json("cancelled" to true, "inFlightMayComplete" to true) }
+        if (method == "end") { policy.revoked = true; controller.revokeClient(client.key); tasks.remove(policy.id); observations.remove(policy.id); BridgeRegistry.confirmations.entries.removeIf { it.value.task == policy.id }; return json("cancelled" to true, "inFlightMayComplete" to true) }
         if (method != "call") fail("UNKNOWN_METHOD", "Unknown bridge method")
         val name = args.string("name", 80)
         val input = args.optJSONObject("arguments") ?: JSONObject()
@@ -113,12 +114,14 @@ class BridgeService : Service() {
         if (name in controller.actionNames) {
             val rid = input.string("request_id", 128)
             val old = observations[policy.id]
+            if(input.has("observation_id") && old?.optString("observation_id") != input.optString("observation_id")) fail("STALE_OBSERVATION","Use the latest observation for this task",json("action_executed" to false))
             val nodes = old?.optJSONObject("tree")?.optJSONArray("elements")
             var node: JSONObject? = null
             if (nodes != null) for (i in 0 until nodes.length()) {
                 val candidate = nodes.optJSONObject(i) ?: continue
                 if (candidate.optString("element_id") == input.optString("element_id")) node = candidate
             }
+            if(name == "input_text" && node?.optBoolean("password",false) == true) fail("LOCAL_INPUT_REQUIRED","Password fields must be completed locally by the user")
             if (BridgePolicy.requiresConfirmation(name, input, node)) {
                 val signature = name + canonical(input)
                 val key = "${policy.id}:$rid"
