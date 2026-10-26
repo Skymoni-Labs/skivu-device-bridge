@@ -1,0 +1,16 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <queries><intent><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent></queries>
+    <application android:label="Skivu 设备伴侣" android:icon="@mipmap/ic_phone_use" android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar">
+        <activity android:name="ai.nidhoggfgg.phoneuse.MainActivity" android:exported="true">
+            <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
+        </activity>
+        <service android:name="ai.nidhoggfgg.phoneuse.device.PhoneAccessibilityService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
+            <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>
+            <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service"/>
+        </service>
+        <service android:name="ai.nidhoggfgg.phoneuse.bridge.BridgeService" android:exported="true">
+            <intent-filter><action android:name="org.skivu.devicebridge.V1"/></intent-filter>
+        </service>
+    </application>
+</manifest>

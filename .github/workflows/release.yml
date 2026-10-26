@@ -2,7 +2,7 @@ name: Release draft
 run-name: Release ${{ github.ref_name }} at ${{ github.sha }}
 on:
   push:
-    tags: ['v*']
+    tags: ['upstream-v*']
   workflow_dispatch:
 permissions:
   contents: read
