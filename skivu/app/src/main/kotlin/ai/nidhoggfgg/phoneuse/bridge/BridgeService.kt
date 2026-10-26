@@ -30,7 +30,7 @@ object BridgeRegistry {
 }
 
 class BridgeService : Service() {
-    private val workers = Executors.newCachedThreadPool()
+    private val workers = java.util.concurrent.ThreadPoolExecutor(4,4,0,java.util.concurrent.TimeUnit.MILLISECONDS,java.util.concurrent.ArrayBlockingQueue(32))
     private val serial = Executors.newSingleThreadExecutor()
     private lateinit var backend: AndroidBackend
     private lateinit var controller: DeviceController
@@ -44,11 +44,13 @@ class BridgeService : Service() {
         val uid = message.sendingUid
         val text = message.data.getString("json") ?: "{}"
         val requestId = message.arg1
-        workers.execute {
+        try { workers.execute {
             val answer = try { val client = identify(uid); if(reply!=null)callbacks[client.key]=reply; dispatch(uid, JSONObject(text)) } catch (e: Exception) { errorResult(e.cause as? DeviceError ?: e) }
             if (answer.toString().length > 650000) { answer.remove("screenshot"); answer.put("screenshot", json("available" to false, "reason" to "IPC_SIZE_LIMIT")) }
             val safe = if (answer.toString().length > 650000) errorResult(DeviceError("LIMIT_EXCEEDED", "Observation is too large; request a smaller scope")) else answer
             try { reply?.send(Message.obtain(null, 1, requestId, 0).apply { data = Bundle().apply { putString("json", safe.toString()) } }) } catch (_: Exception) {}
+        } } catch(_:java.util.concurrent.RejectedExecutionException) {
+            try { reply?.send(Message.obtain(null,1,requestId,0).apply { data=Bundle().apply { putString("json",errorResult(DeviceError("BUSY","Companion request queue is full")).toString()) } }) } catch(_:Exception){}
         }; true
     })
     override fun onCreate() {
@@ -73,6 +75,7 @@ class BridgeService : Service() {
         val args = request.optJSONObject("params") ?: JSONObject()
         if (method == "hello") return json("protocol" to 1, "serviceInstanceId" to instance, "approved" to approved(client.key), "packageName" to packageName)
         if (method == "pair") {
+            if(!approved(client.key) && !BridgeRegistry.pending.containsKey(client.key) && BridgeRegistry.pending.size>=16)fail("BUSY","Too many pending client approvals")
             if (!approved(client.key)) BridgeRegistry.pending[client.key] = client
             return json("approved" to approved(client.key), "requiresLocalApproval" to !approved(client.key))
         }
@@ -137,25 +140,42 @@ class BridgeService : Service() {
             synchronized(policy) { policy.reserve(rid) }
         }
         val result = controller.call(client.key, name, input, ::scope)
+        if(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0 && result.has("error")) {
+            val error=result.optJSONObject("error")
+            android.util.Log.i("SkivuBridge","Rejected $name code=${error?.optString("code")} reason=${error?.optString("reason")} executed=${result.opt("action_executed")}")
+        }
         if (name == "observe" && !result.has("error")) {
             val app = result.optString("package_name")
             policy.checkApp(app); observations[policy.id] = result
         }
         return result
     }
-    fun revokeAll() { tasks.values.forEach { it.revoked = true }; identities.keys.forEach { controller.revokeClient(it) }; tasks.clear(); observations.clear() }
+    fun revokeAll() {
+        tasks.values.forEach { policy ->
+            policy.revoked = true
+            try { callbacks[policy.owner]?.send(Message.obtain(null,2).apply { data=Bundle().apply {
+                putString("json",json("event" to "revoked","taskCapability" to policy.id).toString())
+            } }) } catch(_:Exception){}
+        }
+        identities.keys.forEach { controller.revokeClient(it) }; tasks.clear(); observations.clear()
+    }
     fun targetFor(task: String): String? = observations[task]?.optString("package_name")?.takeIf { it in (tasks[task]?.apps ?: emptySet()) }
     fun notifyApproved(owner: String, task: String) { workers.execute {
         val deadline=SystemClock.elapsedRealtime()+5000
+        var targetSince=0L
         while(SystemClock.elapsedRealtime()<deadline) {
             val policy=tasks[task] ?: return@execute
             if(policy.revoked)return@execute
             val root=PhoneAccessibilityService.current?.rootInActiveWindow
             val active=try { root?.packageName?.toString() } finally { root?.recycle() }
             if(active in policy.apps) {
+                // Wait for the return transition before retrying the exact approved
+                // request. The controller still validates its original target.
+                if(targetSince==0L)targetSince=SystemClock.elapsedRealtime()
+                if(SystemClock.elapsedRealtime()-targetSince<600) { Thread.sleep(100);continue }
                 try { callbacks[owner]?.send(Message.obtain(null,2).apply { data=Bundle().apply { putString("json",json("taskCapability" to task).toString()) } }) } catch(_:Exception){}
                 return@execute
-            }
+            } else targetSince=0L
             Thread.sleep(100)
         }
     } }
